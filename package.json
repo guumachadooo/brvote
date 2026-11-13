@@ -1,0 +1,12 @@
+{
+  "name": "brasil-vote-3d",
+  "version": "1.0.0",
+  "description": "Visualização 3D das eleições no Brasil",
+  "scripts": {
+    "dev": "npx vite",
+    "start": "npx serve ."
+  },
+  "devDependencies": {
+    "vite": "^5.0.0"
+  }
+}
