@@ -1,193 +1,157 @@
-// Shade by Votes: the 2026 U.S. Senate race in Texas, county by county, in two color scales, and a fade between them.
-//
-// Percentage color is the usual one, the same as the bar view's (app.js): the winner's color, shaded by the winner's share
-// of the county's vote in 10-point bands. Vote-lead color keeps the winner's color but shades by the county's lead in
-// votes (winner minus runner-up), on a square-root scale up to the biggest lead in the state, so counties where few
-// people voted fade to pale whatever their percentage. The page fades each county's color from one to the other.
-//
-// Each step in the text names how far the map has faded (data-mix, 0 = percentage, 1 = vote lead) and which counties to
-// point at (data-focus); the numbers in the text are worked out here from the results, so they can't drift from the data.
-import { geoConicEqualArea, geoPath } from 'd3-geo';
-import { feature } from 'topojson-client';
+import * as THREE from 'three';
 import { STATE } from './state.js';
-import { BINS, BAND_LABELS, REP_C, DEM_C, leadRGB, leadT, leadGradient, leadTicks, tickLabel } from './colors.js';
+import { createMap3D } from './map3d.js';
+import { marginColorHex, leadColorHex } from './colors.js';
 
-const GEO_URL = 'https://cdn.jsdelivr.net/npm/us-atlas@3.0.1/counties-10m.json';
-const $ = id => document.getElementById(id);
-const num = n => n.toLocaleString('en-US');
-const short = n => n >= 1e6 ? (n / 1e6).toFixed(2) + ' million' : num(n);
-const pct = (a, b, d = 0) => (100 * a / b).toFixed(d) + '%';
-const sum = (list, f) => list.reduce((s, c) => s + f(c), 0);
-const getJSON = url => fetch(url).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); });
+document.title = `E se Pintarmos ${STATE.name} pelo Saldo de Votos?`;
+document.getElementById('linkStory').href = `story.html?uf=${STATE.slug}`;
+document.getElementById('linkMisread').href = `misread.html?uf=${STATE.slug}`;
+document.getElementById('linkExplore').href = STATE.results.href;
+document.getElementById('ctaExplore').href = STATE.results.href;
 
-const [res, us] = await Promise.all([getJSON(STATE.data.results), getJSON(GEO_URL)]);
-const race = res.races.find(r => r.id === 'u-s-senate');
-const D = race.candidates.find(c => c.party === 'DEM'), R = race.candidates.find(c => c.party === 'REP');
-const counties = res.counties.map((c, i) => {
-  const [dem, rep, , total] = race.counties[i];
-  const dWon = dem > rep;
-  return { ...c, dem, rep, total, dWon, lead: Math.abs(dem - rep), share: 100 * Math.max(dem, rep) / total };
-});
-const byFips = new Map(counties.map(c => [c.fips, c]));
-const TOT = sum(counties, c => c.total), LAND = sum(counties, c => c.landSqMi);
-const W = D.votes > R.votes ? D : R, L = W === D ? R : D;      // the state's winner and runner-up
-const wonBy = (c, cand) => (c.dWon ? D : R) === cand;
-const party = cand => cand === D ? 'd' : 'r';
-const name = cand => `<span class="${party(cand)}">${cand.last}</span>`;
+const stage = document.getElementById('stage');
+const callouts = document.getElementById('callouts');
+const captionBar = document.getElementById('captionBar');
+const explain = document.getElementById('explain');
+const liftBtn = document.getElementById('liftBtn');
 
-// ---------- the two color scales (colors.js) ----------
-const band = c => Math.max(0, BINS.findLastIndex(b => c.share >= b));
-const rgb = hex => [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16));
-const ramp = c => c.dWon ? DEM_C : REP_C;
-const pctColor = c => rgb(ramp(c)[band(c)]);
-const MAX_LEAD = Math.max(...counties.map(c => c.lead));
-const relT = lead => leadT(lead, MAX_LEAD);
-const relColor = c => leadRGB(c.dWon, c.lead, MAX_LEAD);
-for (const c of counties) { c.colA = pctColor(c); c.colB = relColor(c); }
-const mixColor = (c, m) => `rgb(${c.colA.map((v, k) => Math.round(v + (c.colB[k] - v) * m)).join(',')})`;
+const map = await createMap3D(stage, { interactive: true });
+const fmt = n => Math.round(n).toLocaleString('pt-BR');
 
-// ---------- the counties the text points at ----------
-const BIG = [...counties].sort((a, b) => b.total - a.total)[0];
-const TINY = counties.filter(c => band(c) === 5).sort((a, b) => a.total - b.total)[0] ?? [...counties].sort((a, b) => b.share - a.share)[0];
-const DARK = counties.filter(c => wonBy(c, L) && c.share >= 70);   // the runner-up's three darkest shades
-const DARKEST = counties.filter(c => wonBy(c, L) && c.share >= 80);
-const CLOSE_BIG = counties.filter(c => c.share < 60).sort((a, b) => b.lead - a.lead)[0];
-const SMALL_LEAD = 5000, SMALL = counties.filter(c => c.lead < SMALL_LEAD);
-const FOCUS = { tiny: [TINY], big: [BIG], dark: DARK, close: [CLOSE_BIG] };
-const compare = (a, b) => a >= b ? `more than` : a >= 0.9 * b ? `almost as many as` : `${pct(a, b)} as many as`;
-const bandName = c => c.share < 50 ? 'under 50%' : BAND_LABELS[band(c)].replace('–', ' to ').replace('90+', '90% or more') + (band(c) < 5 ? '%' : '');
+const raceId = STATE.defaultRace || '2026-pres-2t';
+map.applyState({ raceId, raise: 0, colorMode: 'winner', split: false, dur: 10 });
 
-// ---------- the text ----------
-const lWon = counties.filter(c => wonBy(c, L));
-const fill = (id, html) => { const el = $(id); if (el) el.innerHTML = html; };
-fill('s1', `${W.name} won the state, ${pct(W.votes, TOT, 1)} to ${pct(L.votes, TOT, 1)}, a lead of <b>${num(W.votes - L.votes)} votes</b>. ` +
-  `But ${name(L)} won ${lWon.length} of ${counties.length} counties, covering ${pct(sum(lWon, c => c.landSqMi), LAND)} of the land, many of them by a lot. ` +
-  `Each county is colored for whoever won it, and shaded by the winner's share: light for a close race, dark for a landslide.`);
-fill('s2', `<b>${TINY.name} County</b>: ${num(TINY.total)} voters, ${pct(Math.max(TINY.dem, TINY.rep), TINY.total)} for ${name(TINY.dWon ? D : R)}, ` +
-  `a lead of <b>${num(TINY.lead)} votes</b>. It gets the darkest shade on the map.` +
-  `<span class="big">${num(TINY.lead)} vs. ${num(BIG.lead)}</span>` +
-  `<b>${BIG.name} County</b>: ${short(BIG.total)} voters, ${pct(Math.max(BIG.dem, BIG.rep), BIG.total)} for ${name(BIG.dWon ? D : R)}, ` +
-  `a lead of <b>${num(BIG.lead)} votes</b>, ${num(Math.round(BIG.lead / TINY.lead))} times as many. It gets a lighter shade.`);
-const darkLead = sum(DARK, c => c.lead);
-fill('s3', `<b>${DARK.length} counties</b> gave ${name(L)} 70% or more, the three darkest reds. They cover <b>${pct(sum(DARK, c => c.landSqMi), LAND)} of Texas</b>, ` +
-  `but cast just ${pct(sum(DARK, c => c.total), TOT)} of its votes. Together, their lead for ${name(L)} was ${num(darkLead)} votes.` +
-  `<span class="big">${num(BIG.lead)}</span>${BIG.name} County's lead alone for ${name(BIG.dWon ? D : R)}: ${compare(BIG.lead, darkLead)} all ${DARK.length} of them put together.`);
-fill('s4', `<b>${CLOSE_BIG.name} County</b> went ${pct(Math.max(CLOSE_BIG.dem, CLOSE_BIG.rep), CLOSE_BIG.total)} for ${name(CLOSE_BIG.dWon ? D : R)}, ` +
-  `so it gets one of the lightest shades. But ${short(CLOSE_BIG.total)} people voted there, so that narrow win was a lead of <b>${num(CLOSE_BIG.lead)} votes</b>: ` +
-  `${compare(CLOSE_BIG.lead, sum(DARKEST, c => c.lead))} the ${DARKEST.length} counties that gave ${name(L)} 80% or more, put together.`);
-fill('s5', `Now each county is shaded by its <b>lead in votes</b>: the winner's votes minus the runner-up's. The darkest is ${BIG.name} County, ` +
-  `with a lead of ${num(MAX_LEAD)}. The more votes a county added to its winner's statewide total, the darker it is, and a county where few people voted fades to pale, whatever its percentage.`);
-fill('s6', `${TINY.name} County's lead of ${num(TINY.lead)} is ${pct(TINY.lead, BIG.lead, 2)} of ${BIG.name} County's, so it all but disappears. ` +
-  `${BIG.name} County is now the darkest on the map.`);
-fill('s7', `The ${DARK.length} counties that were the darkest red now barely show. In all, <b>${SMALL.length} counties</b> had a lead under ${num(SMALL_LEAD)} votes. ` +
-  `They cover <b>${pct(sum(SMALL, c => c.landSqMi), LAND)} of Texas</b>, and they all look pale.`);
-fill('s8b', `${CLOSE_BIG.name} County, at ${pct(Math.max(CLOSE_BIG.dem, CLOSE_BIG.rep), CLOSE_BIG.total)}, now shows clearly, because a modest win among ${short(CLOSE_BIG.total)} voters is a lead of ${num(CLOSE_BIG.lead)}.`);
-$('src').textContent = `Results: ${res.meta.resultsSource}, as of ${res.meta.resultsUpdated}.`;
+const sortedByVotes = [...map.counties].filter(c => c.cur.tot > 0).sort((a, b) => b.cur.tot - a.cur.tot);
+const big1 = sortedByVotes[0] || map.counties[0];
+const small1 = sortedByVotes[sortedByVotes.length - 1] || big1;
 
-// ---------- legends ----------
-const legRow = (cand, inner) => `<div class="row"><span class="${party(cand)}">${cand.last}</span>${inner}</div>`;
-$('legPct').innerHTML = `<div class="t">Winner's share of the county's vote</div>` +
-  [W, L].map(cand => legRow(cand, `<div class="bands">${(cand === D ? DEM_C : REP_C).map(col => `<i style="background:${col}"></i>`).join('')}</div>`)).join('') +
-  `<div class="ticks"><span></span><div class="bandlabels">${BAND_LABELS.map(l => `<span>${l}</span>`).join('')}</div></div>`;
-const gradient = leadGradient, TICKS = leadTicks(MAX_LEAD);
-$('legRel').innerHTML = `<div class="t">County's lead in votes</div>` +
-  [W, L].map(cand => legRow(cand, `<div class="ramp" style="background:${gradient(cand === D ? DEM_C : REP_C)}"></div>`)).join('') +
-  `<div class="ticks"><span></span><div class="pos">${TICKS.map(v => `<span style="left:${(100 * relT(v)).toFixed(1)}%">${tickLabel(v)}</span>`).join('')}</div></div>`;
-
-// ---------- the map ----------
-const VW = 1000, VH = 900;
-const svg = $('map');
-svg.setAttribute('viewBox', `0 0 ${VW} ${VH}`);
-const geo = feature(us, us.objects.counties);
-const tx = { type: 'FeatureCollection', features: geo.features.filter(f => String(f.id).startsWith(STATE.fips) && byFips.has(String(f.id))) };
-const projection = geoConicEqualArea().parallels(STATE.parallels).rotate(STATE.rotate).fitExtent([[10, 10], [VW - 10, VH - 10]], tx);
-const path = geoPath(projection);
-const NS = 'http://www.w3.org/2000/svg';
-const el = (tag, attrs = {}, parent = svg) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); parent.appendChild(e); return e; };
-const gCounties = el('g'), gFocus = el('g'), gTags = el('g');
-const shapes = tx.features.map(f => {
-  const c = byFips.get(String(f.id));
-  c.d = path(f); c.centroid = path.centroid(f);
-  c.node = el('path', { d: c.d, class: 'county' }, gCounties);
-  return c;
-});
-
-// ---------- drawing: the fade, and the counties in focus ----------
-let mix = 0, focus = [];
-function drawColors() {
-  for (const c of shapes) c.node.style.fill = mixColor(c, mix);
-  $('legPct').style.opacity = String(1 - mix);
-  $('legRel').style.opacity = String(mix);
-  $('modeName').textContent = mix < 0.02 ? 'Percentage color' : mix > 0.98 ? 'Vote-lead color' : 'Fading…';
-  $('mix').value = String(Math.round(mix * 1000));
+let maxLead = 1;
+for (const c of map.counties) {
+  const l = Math.abs(c.cur.r - c.cur.d);
+  if (l > maxLead) maxLead = l;
 }
-function drawFocus() {
-  const set = new Set(focus);
-  for (const c of shapes) c.node.style.opacity = set.size && !set.has(c) ? '0.28' : '1';
-  gFocus.replaceChildren(); gTags.replaceChildren();
-  if (focus.length > 6) return; // a big group is shown by dimming the rest, without outlines or names
-  for (const c of focus) {
-    el('path', { d: c.d, class: 'focus' }, gFocus);
-    const [x, y] = c.centroid, right = x < VW - 330;
-    const t = el('text', { class: 'tag', x: right ? x + 18 : x - 18, y: y - 6, 'text-anchor': right ? 'start' : 'end' }, gTags);
-    el('tspan', {}, t).textContent = `${c.name}`;
-    el('tspan', { class: 'sub', x: right ? x + 18 : x - 18, dy: 24 }, t).textContent = `${num(c.total)} voters · lead ${num(c.lead)}`;
+
+const smallLead = Math.abs(small1.cur.r - small1.cur.d);
+const bigLead = Math.abs(big1.cur.r - big1.cur.d);
+const smallPct = small1.cur.tot ? ((Math.max(small1.cur.r, small1.cur.d) / small1.cur.tot) * 100).toFixed(0) : '60';
+const bigPct = big1.cur.tot ? ((Math.max(big1.cur.r, big1.cur.d) / big1.cur.tot) * 100).toFixed(0) : '55';
+
+document.getElementById('pairCards').innerHTML = `
+  <div class="ex">
+    <div class="ex-head"><b>${small1.name}</b><span>${fmt(small1.cur.tot)} votos</span></div>
+    <div class="ex-body">Venceu com <b>${smallPct}%</b> — uma margem percentual alta, mas que representa um saldo líquido de apenas <b>${fmt(smallLead)} votos</b>.</div>
+    <div class="sw-row">
+      <div><span>Vencedor</span><i id="sw-k-win"></i></div>
+      <div><span>Margem %</span><i id="sw-k-mar"></i></div>
+      <div><span>Saldo de votos</span><i id="sw-k-lead"></i></div>
+    </div>
+  </div>
+  <div class="ex">
+    <div class="ex-head"><b>${big1.name}</b><span>${fmt(big1.cur.tot)} votos</span></div>
+    <div class="ex-body">Venceu com <b>${bigPct}%</b> — uma margem percentual moderada, mas que entrega um saldo líquido decisivo de <b>${fmt(bigLead)} votos</b>.</div>
+    <div class="sw-row">
+      <div><span>Vencedor</span><i id="sw-t-win"></i></div>
+      <div><span>Margem %</span><i id="sw-t-mar"></i></div>
+      <div><span>Saldo de votos</span><i id="sw-t-lead"></i></div>
+    </div>
+  </div>
+`;
+
+document.getElementById('sw-k-win').style.background  = small1.cur.r >= small1.cur.d ? '#3b5bdb' : '#d72f30';
+document.getElementById('sw-k-mar').style.background  = marginColorHex(small1.cur.r, small1.cur.d);
+document.getElementById('sw-k-lead').style.background = leadColorHex(small1.cur.r, small1.cur.d, maxLead);
+
+document.getElementById('sw-t-win').style.background  = big1.cur.r >= big1.cur.d ? '#3b5bdb' : '#d72f30';
+document.getElementById('sw-t-mar').style.background  = marginColorHex(big1.cur.r, big1.cur.d);
+document.getElementById('sw-t-lead').style.background = leadColorHex(big1.cur.r, big1.cur.d, maxLead);
+
+const MODES = {
+  winner: {
+    title: '1 · Vencedor leva a cor (o mapa padrão de TV)',
+    body: `Todo município vencido pelo PL recebe o mesmo azul; todo município vencido pelo PT recebe o mesmo vermelho. Um município com ${fmt(small1.cur.tot)} votos grita tão alto quanto ${big1.name} com ${fmt(big1.cur.tot)} votos.`,
+    caption: `<b>Mapa de vencedor único</b> — cada município recebe cor sólida de acordo com quem terminou em 1º lugar.`,
+  },
+  margin: {
+    title: '2 · Pintado pela margem percentual (a tentativa comum que piora a distorção)',
+    body: `Pintar pela margem em pontos percentuais dá os tons mais escuros e saturados aos menores municípios rurais e deixa os grandes centros urbanos pálidos — porque cidades grandes raramente votam 85–15.`,
+    caption: `<b>Pintado pela margem %</b> — os municípios menos populosos ganham as cores mais fortes; as metrópoles desbotam.`,
+  },
+  lead: {
+    title: '3 · Pintado pelo saldo líquido de votos (a correção em 2D)',
+    body: `Aqui a saturação da cor é proporcional a <b>|votos do 1º − votos do 2º|</b>. Municípios onde o saldo líquido é de poucos milhares de votos ficam próximos ao neutro escuro; apenas os lugares onde um candidato acumulou dezenas ou centenas de milhares de votos de frente brilham em vermelho ou azul vivo.`,
+    caption: `<b>Pintado pelo saldo de votos</b> — continua 100% plano, mas seu olhar vai direto para onde os votos de vantagem realmente estão.`,
+  },
+};
+
+const PINS = [
+  { county: small1.name, sub: `saldo de ${fmt(smallLead)} votos` },
+  { county: big1.name,   sub: `saldo de ${fmt(bigLead)} votos` },
+];
+
+let curMode = 'winner';
+let lifted = false;
+let activePins = [];
+
+function rebuildPins() {
+  callouts.innerHTML = '';
+  activePins = PINS.map(p => {
+    const c = map.getCounty(p.county);
+    if (!c) return null;
+    const el = document.createElement('div');
+    el.className = 'callout';
+    el.innerHTML = `<div class="box">${c.name}<span class="sub">${p.sub}</span></div>`;
+    callouts.appendChild(el);
+    return { c, el };
+  }).filter(Boolean);
+}
+rebuildPins();
+
+map.onTick(() => {
+  for (const p of activePins) {
+    const topY = p.c.curBot + p.c.curMid + p.c.curTop;
+    const s = map.projectToScreen(new THREE.Vector3(p.c.cx, topY, -p.c.cy));
+    p.el.style.display = s.visible ? 'block' : 'none';
+    p.el.style.left = s.x + 'px';
+    p.el.style.top  = s.y + 'px';
   }
-}
-function draw() { drawColors(); }
-
-// one animation at a time, from wherever the map is now
-let anim = null;
-const ease = x => x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
-function fadeTo(target, seconds) {
-  if (anim) cancelAnimationFrame(anim.id);
-  const from = mix, dist = Math.abs(target - from);
-  if (dist < 0.001) { anim = null; mix = target; draw(); updateButton(); return; }
-  const dur = seconds * 1000 * Math.max(0.35, dist), start = performance.now();
-  const step = now => {
-    const k = Math.min(1, (now - start) / dur);
-    mix = from + (target - from) * ease(k); draw();
-    if (k < 1) anim.id = requestAnimationFrame(step); else { anim = null; updateButton(); }
-  };
-  anim = { id: requestAnimationFrame(step), target };
-  updateButton();
-}
-const updateButton = () => { const goingTo = anim ? anim.target : mix; $('fade').textContent = goingTo > 0.5 ? '◀ Fade back' : 'Fade ▶'; };
-
-$('mix').addEventListener('input', e => { if (anim) { cancelAnimationFrame(anim.id); anim = null; } mix = e.target.value / 1000; draw(); updateButton(); });
-$('fade').addEventListener('click', () => fadeTo((anim ? anim.target : mix) > 0.5 ? 0 : 1, 3));
-
-// ---------- the steps: whichever crosses the reading line sets the map ----------
-const steps = [...document.querySelectorAll('.rel-step')];
-const phone = matchMedia('(max-width: 860px)');
-let current = -1;
-function onScroll() {
-  const line = innerHeight * (phone.matches ? 0.72 : 0.5);
-  let i = 0;
-  steps.forEach((s, k) => { if (s.getBoundingClientRect().top < line) i = k; });
-  if (i === current) return;
-  current = i;
-  steps.forEach((s, k) => s.classList.toggle('now', k === i));
-  const s = steps[i];
-  focus = (s.dataset.focus ?? '').split(',').flatMap(k => FOCUS[k] ?? []);
-  drawFocus();
-  fadeTo(Number(s.dataset.mix), 2.4);
-}
-addEventListener('scroll', onScroll, { passive: true });
-addEventListener('resize', onScroll);
-
-// ---------- the tooltip ----------
-const tip = $('tip'), fig = $('figure');
-gCounties.addEventListener('pointermove', e => {
-  const c = shapes.find(s => s.node === e.target); if (!c) return;
-  const winner = c.dWon ? D : R;
-  tip.innerHTML = `<b>${c.name} County</b>${pct(Math.max(c.dem, c.rep), c.total)} for ${name(winner)}<br>Lead: ${num(c.lead)} votes<br>${num(c.total)} voters`;
-  tip.hidden = false;
-  const box = fig.getBoundingClientRect(), x = e.clientX - box.left, y = e.clientY - box.top;
-  tip.style.left = Math.min(x + 14, box.width - tip.offsetWidth - 4) + 'px';
-  tip.style.top = Math.max(0, y - tip.offsetHeight - 10) + 'px';
 });
-gCounties.addEventListener('pointerleave', () => { tip.hidden = true; });
 
-draw();
-onScroll();
+function apply() {
+  const m = MODES[curMode];
+  explain.innerHTML = `<h3>${m.title}</h3><p>${m.body}</p>`;
+  captionBar.innerHTML = m.caption;
+  document.querySelectorAll('.mode').forEach(b => {
+    b.classList.toggle('on', b.dataset.mode === curMode);
+  });
+  map.applyState({
+    raceId,
+    raise: lifted ? 1 : 0,
+    colorMode: curMode,
+    split: false,
+  });
+}
+
+document.querySelectorAll('.mode').forEach(btn => {
+  btn.onclick = () => {
+    curMode = btn.dataset.mode;
+    apply();
+  };
+});
+
+liftBtn.onclick = () => {
+  lifted = !lifted;
+  liftBtn.classList.toggle('on', lifted);
+  liftBtn.textContent = lifted ? 'Voltar ao mapa plano 2D' : 'Inclinar para 3D';
+  map.applyState({
+    raceId,
+    raise: lifted ? 1 : 0,
+    colorMode: curMode,
+    split: false,
+  });
+  map.setCamera(lifted
+    ? { pos: [14, 185, 215], target: [4, 10, 6] }
+    : { pos: [0, 285, 0.01], target: [0, 0, 0] });
+};
+
+apply();
+map.setCamera({ pos: [0, 285, 0.01], target: [0, 0, 0], dur: 0 });

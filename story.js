@@ -1,401 +1,213 @@
-// Flythrough of the 2026 U.S. Senate race: it plays on its own, scene by scene (?scene=N opens on a scene). The camera flies
-// between groups of counties, the columns rise and fall, and the colors switch between "who won" and "how far it moved".
-// Every number in the cards is computed here from the data files; only the choice of which counties to visit is written by hand.
 import * as THREE from 'three';
-import { createCityLabels } from './cities.js';
-import { GEO_URL, buildMap, layout, H_FLAT, REP_C, DEM_C, LOSER_C, OTHER_C, winnerColor } from './map3d.js';
+import { STATE } from './state.js';
+import { createMap3D } from './map3d.js';
 
-const $ = id => document.getElementById(id);
-const getJSON = url => fetch(url).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); });
-let res, us, hist;
-try {
-  [res, us, hist] = await Promise.all([getJSON('data/results-2026.json'), getJSON(GEO_URL), getJSON('data/results-history.json')]);
-} catch (e) {
-  $('loading').textContent = 'Could not load the map data. Please reload the page.';
-  $('loading').classList.add('failed');
-  throw e;
-}
+document.title = `Tour Guiado por ${STATE.name} — Como o Brasil Vota`;
+document.getElementById('brand').innerHTML = `<b>${STATE.name}</b> · Um passeio de 60 segundos pelos municípios`;
+document.getElementById('linkMisread').href = `misread.html?uf=${STATE.slug}`;
+document.getElementById('linkExplore').href = STATE.results.href;
 
-// ---------- data ----------
-const RACE = res.races.find(r => r.id === 'u-s-senate');
-const BEFORE = hist.races.find(r => r.id === '2024-president'); // same county order as results-2026.json
-const D = RACE.candidates.find(c => c.party === 'DEM'), R = RACE.candidates.find(c => c.party === 'REP');
-const counties = res.counties.map((c, i) => {
-  const [dem, rep, other, total] = RACE.counties[i], [d0, r0, , t0] = BEFORE.counties[i];
-  const m = 100 * (dem - rep) / total, m0 = 100 * (d0 - r0) / t0; // margin, + = Democratic
-  return { ...c, dem, rep, other, total, m, m0, shift: m - m0, total0: t0 };
-});
-const byName = new Map(counties.map(c => [c.name, c]));
-const pick = names => names.map(n => byName.get(n)).filter(Boolean);
+const stage = document.getElementById('stage');
+const callouts = document.getElementById('callouts');
+const map = await createMap3D(stage, { interactive: true });
 
-const fmt = n => n.toLocaleString('en-US');
-const pct = (a, b, d = 0) => (100 * a / b).toFixed(d) + '%';
-const short = n => n >= 1e6 ? (n / 1e6).toFixed(2) + 'M' : n >= 1e4 ? Math.round(n / 1e3) + 'K' : fmt(n);
-const mg = (m, d = 0) => (m >= 0 ? 'D+' : 'R+') + Math.abs(m).toFixed(d);
-const list = a => a.length < 2 ? a.join('') : a.slice(0, -1).join(', ') + ' and ' + a.at(-1);
+const fmt = n => Math.round(n).toLocaleString('pt-BR');
 
-const land = counties.reduce((s, c) => s + c.landSqMi, 0);
-const S = { dem: 0, rep: 0, tot: 0, cntR: 0, landR: 0, tot0: 0, d0: 0, r0: 0 };
-for (const c of counties) {
-  S.dem += c.dem; S.rep += c.rep; S.tot += c.total; S.tot0 += c.total0;
-  if (c.rep >= c.dem) { S.cntR++; S.landR += c.landSqMi; }
-}
-for (const [d0, r0] of BEFORE.counties) { S.d0 += d0; S.r0 += r0; }
-const desc = [...counties].sort((a, b) => b.total - a.total), asc = [...desc].reverse();
-const big = desc[0];
-let nSmall = 0, accSmall = 0, landSmall = 0;
-while (accSmall + asc[nSmall].total < big.total) { accSmall += asc[nSmall].total; landSmall += asc[nSmall].landSqMi; nSmall++; }
-const smallest = asc.slice(0, nSmall);
-const reddest = [...counties].sort((a, b) => a.m - b.m).slice(0, 5);
-const big5 = desc.slice(0, 5), big5v = big5.reduce((s, c) => s + c.total, 0);
-const big5R = big5.reduce((s, c) => s + c.rep, 0);
-let nR = 0; // how many of Paxton's lowest-vote counties it takes to match his votes in the big five
-for (let s = 0, byRep = [...counties].sort((a, b) => a.rep - b.rep); nR < byRep.length && s + byRep[nR].rep <= big5R; nR++) s += byRep[nR].rep;
-const flipped = counties.filter(c => c.m > 0 && c.m0 < 0);
-const DFW = pick(['Tarrant', 'Collin', 'Denton', 'Kaufman', 'Rockwall', 'Ellis', 'Johnson', 'Parker']).filter(c => flipped.includes(c));
-const VALLEY = pick(['Hidalgo', 'Cameron', 'Starr', 'Webb', 'Zapata', 'Willacy', 'Maverick']).filter(c => flipped.includes(c));
-const byShift = [...counties].sort((a, b) => b.shift - a.shift);
-const movedD = counties.filter(c => c.shift > 0).length;
-const medianShift = byShift[Math.floor(byShift.length / 2)].shift;
-const flipVotes = flipped.reduce((s, c) => s + c.total, 0);
+// Encontrar o maior município (capital), o segundo maior e os 2 menores em votos
+const raceId = STATE.defaultRace || '2026-pres-2t';
+map.applyState({ raceId, raise: 0, colorMode: 'winner', split: false, dur: 10 });
+const sortedByVotes = [...map.counties].filter(c => c.cur.tot > 0).sort((a, b) => b.cur.tot - a.cur.tot);
+const big1 = sortedByVotes[0] || map.counties[0];
+const big2 = sortedByVotes[1] || big1;
+const small1 = sortedByVotes[sortedByVotes.length - 1] || big1;
+const small2 = sortedByVotes[sortedByVotes.length - 2] || small1;
 
-// Down the ballot: the Texas House and the U.S. House, every district added up by county (same county order).
-function chamber(id) {
-  const r = res.races.find(x => x.id === id), p = hist.races.find(x => x.id === `2024-${id}`);
-  const before = new Map(p.districts.map(d => [d.district, d.candidates[0].party]));
-  const dist = r.districts.map(d => {
-    const [a, b] = d.candidates;
-    return { ...d, w: a, m: b ? 100 * (a.votes - b.votes) / d.total : 100, before: before.get(d.district) };
-  });
-  const row = ([dem, rep, other, total]) => ({ dem, rep, other, total });
-  const sum = k => r.counties.reduce((s, x) => s + x[k], 0);
-  return { r, label: r.label, rows: r.counties.map(row), rows0: p.counties.map(row), dist, n: dist.length,
-    dem: sum(0), rep: sum(1), tot: sum(3), seatD: r.seats.DEM || 0, seatR: r.seats.REP || 0, seatD0: p.seats.DEM || 0,
-    gainD: dist.filter(d => d.before === 'REP' && d.w.party === 'DEM'), gainR: dist.filter(d => d.before === 'DEM' && d.w.party === 'REP') };
-}
-const TXH = chamber('texas-house'), USH = chamber('u-s-house');
-counties.forEach((c, i) => c.i = i);
-// counties whose Texas House vote (all districts added up) went from a Republican lead in 2024 to a Democratic one
-const txhFlipped = counties.filter(c => { const a = TXH.rows0[c.i], b = TXH.rows[c.i]; return a.rep > a.dem && b.dem > b.rep; })
-  .sort((a, b) => TXH.rows[b.i].total - TXH.rows[a.i].total);
-const txhClose = TXH.gainD.filter(d => d.m < 2);
-// ticket-splitting: counties the Senate Democrat won where Republicans got more U.S. House votes, and the reverse
-const splitR = counties.filter(c => c.dem > c.rep && USH.rows[c.i].rep > USH.rows[c.i].dem);
-const splitD = counties.filter(c => c.rep > c.dem && USH.rows[c.i].dem > USH.rows[c.i].rep);
-const cm = (row, d = 0) => mg(100 * (row.dem - row.rep) / row.total, d);
-// a strip of seats: Democratic holds, Democratic gains, Republican gains, Republican holds
-const seatStrip = ch => {
-  const cell = (cls, k) => `<i class="${cls}"></i>`.repeat(k);
-  return `<div class="seats" role="img" aria-label="${ch.seatD} Democratic and ${ch.seatR} Republican seats">` +
-    cell('d', ch.seatD - ch.gainD.length) + cell('d f', ch.gainD.length) + cell('r f', ch.gainR.length) + cell('r', ch.seatR - ch.gainR.length) +
-    `</div><div class="seats-key"><span><i class="d"></i>${ch.seatD} D</span><span><i class="r"></i>${ch.seatR} R</span><span><i class="d f"></i>changed party since 2024</span></div>`;
-};
-const distList = ds => list(ds.map(d => `District ${d.district} (${d.w.name}, by ${d.m.toFixed(1)} points)`));
+const totStateVotes = sortedByVotes.reduce((s, c) => s + c.cur.tot, 0);
+const rCounties = sortedByVotes.filter(c => c.cur.r >= c.cur.d).length;
+const dCounties = sortedByVotes.length - rCounties;
 
-// Colors: winner's share in 10-point bands (map3d.js, as on the main map); shift toward a party in 10-point bands.
-const SHIFT_BINS = [0, 10, 20, 30, 40, 50];
-const SHIFT_D = ['#3d3a52', '#4f4a8a', '#5f59c0', '#7b7bf0', '#a9a6ff', '#e0ddff'];
-const SHIFT_R = '#b84a4a';
-const shiftColor = c => c.shift < 0 ? SHIFT_R : SHIFT_D[Math.max(0, SHIFT_BINS.findLastIndex(b => c.shift >= b))];
-
-// ---------- the story ----------
-// view: 'state' (whole map) or a list of counties to frame. raise: 0 flat → 1 columns. phi: tilt (0 = straight down).
-// theta: compass angle of the camera. hi: counties lit up (null = all). label: text under the county name.
-const vs = c => `${short(c.total)} votes`;
 const STEPS = [
-  { view: 'state', raise: 0, phi: 0.0001, theta: 0, color: 'winner', hi: null, labels: [], card: () => `
-    <div class="kicker">Nov. 3, 2026 · U.S. Senate</div>
-    <h1>Texas, county by county</h1>
-    <h2>A red map</h2>
-    <p>${R.name} carried <b class="hl">${S.cntR} of ${counties.length}</b> counties, which cover <b class="hl">${pct(S.landR, land)}</b> of Texas's land.</p>
-    <p>${D.name} won the state anyway, <b class="hl">${pct(S.dem, S.tot, 1)} to ${pct(S.rep, S.tot, 1)}</b>. This is how.</p>` },
-  { view: reddest, raise: 0, phi: 0.75, theta: -0.35, zoom: 1.3, color: 'winner', hi: reddest, labels: reddest, label: c => `${mg(c.m)} · ${fmt(c.total)} votes`, card: () => `
-    <div class="kicker">The Panhandle and West Texas</div>
-    <h2>Deep red, and nearly empty</h2>
-    <p>${R.last}'s five best counties were ${list(reddest.map(c => c.name))}. He won them by up to ${Math.abs(reddest[0].m).toFixed(0)} points.</p>
-    <div class="big">${fmt(reddest.reduce((s, c) => s + c.total, 0))}<small>votes cast in those five counties together, ${pct(reddest.reduce((s, c) => s + c.total, 0), S.tot, 2)} of the state</small></div>
-    <p>On a flat map each of them gets as much color as a county of a million voters. The smallest of all, ${asc[0].name} County, cast ${fmt(asc[0].total)} votes.</p>` },
-  { view: 'state', raise: 1, phi: 0.98, theta: -0.22, zoom: 1.08, color: 'winner', hi: [big, ...smallest], labels: [big], label: vs, card: () => `
-    <div class="kicker">Raise the counties</div>
-    <h2>Now give each county its votes</h2>
-    <p>Each column's height is the number of votes cast there. The lit-up counties are ${big.name} and the <b class="hl">${nSmall} counties</b> that cast the fewest votes.</p>
-    <div class="stat-row"><div class="stat"><b>${fmt(big.total)}</b><span>votes in ${big.name} County</span></div>
-      <div class="stat"><b>${fmt(accSmall)}</b><span>votes in the ${nSmall} smallest, together</span></div></div>
-    <p>Those ${nSmall} counties cover ${pct(landSmall, land)} of Texas's land.</p>
-    <p>Each column is also split by how its county voted: the runner-up's votes at the bottom, third-party and write-in votes in gray, and the winner's votes on top.</p>` },
-  { view: big5, raise: 1, phi: 1.0, theta: 0.45, zoom: 1.15, color: 'winner', hi: big5, labels: big5, label: c => `${vs(c)} · ${mg(c.m)}`, card: () => `
-    <div class="kicker">The Texas Triangle</div>
-    <h2>Five counties, ${pct(big5v, S.tot)} of the vote</h2>
-    <p>${list(big5.map(c => c.name))} cast <b class="hl">${fmt(big5v)}</b> votes between them. ${D.last} carried all five${big5.every(c => c.m > 0) ? '' : ' but one'}.</p>
-    <p>Together they gave him a lead of <b class="hl">${fmt(big5.reduce((s, c) => s + c.dem - c.rep, 0))}</b> votes; his statewide lead was ${fmt(S.dem - S.rep)}.</p>
-    <p>They aren't one-party places. The red at the base of each column is ${R.last}'s share: <b class="hl">${fmt(big5R)}</b> votes in these five,
-      ${pct(big5R, S.rep)} of all his votes in Texas, more than he got in the ${nR} counties where he got the fewest votes, combined.</p>` },
-  { view: DFW, raise: 1, phi: 0.92, theta: -0.6, zoom: 1.25, color: 'winner', hi: DFW, labels: DFW, label: c => `${mg(c.m0)} → ${mg(c.m)}`, card: () => `
-    <div class="kicker">Dallas–Fort Worth</div>
-    <h2>The suburbs flipped</h2>
-    <p>In 2024, Donald Trump carried these ${DFW.length} counties for President. Two years later ${D.last} carried them for the Senate.</p>
-    <ul class="flips">${DFW.map(c => `<li><span>${c.name}</span><span class="r">${mg(c.m0, 1)}</span><span class="ar">→</span><span class="d">${mg(c.m, 1)}</span></li>`).join('')}</ul>
-    <p>The red part of each column shows how close they still are: ${R.last} got between ${Math.min(...DFW.map(c => 100 * c.rep / c.total)).toFixed(0)}% and ${Math.max(...DFW.map(c => 100 * c.rep / c.total)).toFixed(0)}% of the vote in them.</p>
-    <p class="note">2024 President vs. 2026 U.S. Senate, margin as a share of all votes cast. Different races, same voters.</p>` },
-  { view: VALLEY, raise: 1, phi: 0.85, theta: 0.5, zoom: 1.2, color: 'winner', hi: VALLEY, labels: VALLEY, label: c => `${mg(c.m0)} → ${mg(c.m)}`, card: () => {
-    const top = [...VALLEY].sort((a, b) => b.shift - a.shift)[0];
-    return `
-    <div class="kicker">The Rio Grande Valley and the border</div>
-    <h2>The biggest swings in the state</h2>
-    <p>These ${VALLEY.length} border counties all voted for Trump in 2024 and for ${D.last} in 2026.</p>
-    <div class="big">${top.shift.toFixed(0)} points<small>the swing toward the Democrat in ${top.name} County, from ${mg(top.m0, 1)} to ${mg(top.m, 1)}</small></div>
-    <ul class="flips">${VALLEY.map(c => `<li><span>${c.name}</span><span class="r">${mg(c.m0, 1)}</span><span class="ar">→</span><span class="d">${mg(c.m, 1)}</span></li>`).join('')}</ul>`; } },
-  { view: 'state', raise: 0, phi: 0.0001, theta: 0, color: 'shift', hi: null, labels: [byShift[0], byShift.at(-1)], label: c => `${c.shift >= 0 ? '+' : ''}${c.shift.toFixed(0)} pts toward D`, card: () => `
-    <div class="kicker">Every county moved</div>
-    <h2>${movedD === counties.length ? `All ${counties.length} counties` : `${movedD} of ${counties.length} counties`} shifted toward the Democrat</h2>
-    <p>Here each county is colored by how far its margin moved from the 2024 presidential race to the 2026 Senate race. The median county moved <b class="hl">${medianShift.toFixed(0)} points</b>.</p>
-    <p>The biggest move was in ${byShift[0].name} County (${byShift[0].shift.toFixed(0)} points). The smallest was in ${byShift.at(-1).name} County (${byShift.at(-1).shift.toFixed(0)}), which ${R.last} still won ${mg(byShift.at(-1).m)}.</p>
-    <p>${flipped.length} counties flipped from Trump to ${D.last}. They cast ${pct(flipVotes, S.tot)} of the state's votes.</p>` },
-  { view: 'state', raise: 0, phi: 0.45, theta: 0.15, color: TXH, hi: txhFlipped, labels: txhFlipped.slice(0, 6), label: c => `House vote ${cm(TXH.rows0[c.i])} → ${cm(TXH.rows[c.i])}`, card: () => `
-    <div class="kicker">Down the ballot · Texas House</div>
-    <h2>Democrats took the Texas House</h2>
-    <p>Democrats won <b class="hl">${TXH.seatD} of ${TXH.n}</b> seats, up from ${TXH.seatD0} in 2024. They gained ${TXH.gainD.length} districts${TXH.gainR.length ? ` and lost ${TXH.gainR.length}` : ' and lost none'},
-      and won ${pct(TXH.dem, TXH.tot, 1)} of the Texas House vote.</p>
-    ${seatStrip(TXH)}
-    <div class="big">${txhClose.length} of ${TXH.gainD.length}<small>Democratic gains were won by less than 2 points</small></div>
-    <p>Here each county is colored by which party got more Texas House votes there, every district added up. The ${txhFlipped.length} lit-up counties
-      went from a Republican lead in 2024 to a Democratic one.</p>
-    <p class="note">Republicans had held the Texas House since the 2002 election. Seats and votes: Texas Secretary of State, 2026 election-night returns and 2024 final results.</p>` },
-  { view: 'state', raise: 0, phi: 0.45, theta: -0.15, color: USH, hi: splitR, labels: splitR, label: c => `Senate ${mg(c.m)} · House ${cm(USH.rows[c.i])}`, card: () => `
-    <div class="kicker">Down the ballot · U.S. House</div>
-    <h2>More votes, fewer seats</h2>
-    <p>Democrats won <b class="hl">${pct(USH.dem, USH.tot, 1)}</b> of the U.S. House vote in Texas, but <b class="hl">${USH.seatD} of the ${USH.n}</b> seats (${pct(USH.seatD, USH.n)}).</p>
-    ${seatStrip(USH)}
-    <p>They gained ${distList(USH.gainD)}${USH.gainR.length ? `, and lost ${distList(USH.gainR)}` : ''}.</p>
-    <p>That gap doesn't come from empty land: districts have equal populations. It comes from where the district lines fall.</p>
-    <p>Few voters split their tickets. ${D.last} won only ${splitR.length} counties where Republicans got more U.S. House votes (${list(splitR.map(c => c.name))}, lit up),
-      and ${splitD.length ? `${splitD.length} went the other way` : 'none went the other way'}.</p>` },
-  { view: 'state', raise: 1, phi: 1.0, theta: 0.6, zoom: 1.1, spin: true, color: 'winner', hi: null, labels: desc.slice(0, 6), label: vs, card: () => `
-    <div class="kicker">The whole picture</div>
-    <h2>Most of the map, fewer of the votes</h2>
-    <p>${R.last} won ${S.cntR} counties and ${pct(S.landR, land)} of the land. ${D.last} won where people vote, and the state by <b class="hl">${fmt(S.dem - S.rep)}</b> votes.</p>
-    <div class="links">
-      <a class="cta" href="texas.html?race=u-s-senate"><b>See all the results →</b><span>Any race in any year, every county, hover for details</span></a>
-    </div>
-    <p class="note">Sources: Texas Secretary of State, election-night returns as of ${res.meta.resultsUpdated} (unofficial until the canvass) and 2024 final county results;
-      U.S. Census Bureau land area and county boundaries. Column height is proportional to votes cast in the Senate race; each column is split by candidate. <a href="sources.html#texas">Sources and credits →</a></p>` },
+  {
+    tag: 'Passo 1 de 6 · O mapa plano',
+    headline: `Em um mapa plano, cada município de ${STATE.name} tem o mesmo peso visual.`,
+    body: `${STATE.name} possui ${map.counties.length} ${STATE.slug === 'df' ? 'regiões administrativas' : 'municípios'}. Em um mapa tradicional pintado pelo vencedor, áreas extensas com poucos moradores ocupam a maior parte da tela.`,
+    stats: [
+      { k: 'Unidades vencidas pelo PL', v: `${rCounties} de ${sortedByVotes.length}`, cls: 'rep' },
+      { k: 'Unidades vencidas pelo PT', v: `${dCounties} de ${sortedByVotes.length}`, cls: 'dem' },
+      { k: 'Total de votos válidos', v: fmt(totStateVotes) },
+    ],
+    state: { raceId, raise: 0, colorMode: 'winner', split: false },
+    cam:   { pos: [0, 285, 0.01], target: [0, 0, 0] },
+    pins:  [],
+  },
+  {
+    tag: `Passo 2 de 6 · Os menores colégios eleitorais`,
+    headline: `${small1.name} registrou apenas ${fmt(small1.cur.tot)} votos válidos.`,
+    body: `No mapa plano, municípios pequenos como ${small1.name} (${fmt(small1.cur.tot)} votos) e ${small2.name} (${fmt(small2.cur.tot)} votos) aparecem com a mesma intensidade de cor que uma metrópole inteira.`,
+    stats: [
+      { k: small1.name, v: `${fmt(small1.cur.tot)} votos` },
+      { k: small2.name, v: `${fmt(small2.cur.tot)} votos` },
+      { k: `Juntos em relação a ${big1.name}`, v: `${(( (small1.cur.tot + small2.cur.tot) / Math.max(1, big1.cur.tot) ) * 100).toFixed(2)}%` },
+    ],
+    state: { raceId, raise: 0, colorMode: 'margin', focus: [small1.name, small2.name], dimOthers: true },
+    cam:   { pos: [small1.cx, 120, -small1.cy + 50], target: [small1.cx, 0, -small1.cy] },
+    pins: [
+      { county: small1.name, sub: `${fmt(small1.cur.tot)} votos no total` },
+      { county: small2.name, sub: `${fmt(small2.cur.tot)} votos no total` },
+    ],
+  },
+  {
+    tag: `Passo 3 de 6 · O maior polo eleitoral (${big1.name})`,
+    headline: `Um único município — ${big1.name} — concentrou ${fmt(big1.cur.tot)} votos.`,
+    body: `${big1.name} sozinho representa ${((big1.cur.tot / Math.max(1, totStateVotes)) * 100).toFixed(1)}% de todos os votos do estado — mais do que dezenas de municípios do interior somados.`,
+    stats: [
+      { k: `Votos em ${big1.name}`, v: fmt(big1.cur.tot) },
+      { k: 'Votos no PL', v: fmt(big1.cur.r), cls: 'rep' },
+      { k: 'Votos no PT', v: fmt(big1.cur.d), cls: 'dem' },
+    ],
+    state: { raceId, raise: 0, colorMode: 'margin', focus: [big1.name, big2.name], dimOthers: true },
+    cam:   { pos: [big1.cx, 115, -big1.cy + 55], target: [big1.cx, 0, -big1.cy] },
+    pins: [
+      { county: big1.name, sub: `${fmt(big1.cur.tot)} votos` },
+      { county: big2.name, sub: `${fmt(big2.cur.tot)} votos` },
+    ],
+  },
+  {
+    tag: 'Passo 4 de 6 · Erguendo o mapa pelos votos',
+    headline: `Agora erguemos cada município pelo total de votos que depositou na urna.`,
+    body: `Quando a altura passa a refletir o número de eleitores, a geografia real do voto aparece: grandes picos metropolitanos cercados por colinas regionais.`,
+    stats: [
+      { k: `Pico mais alto (${big1.name})`, v: `${fmt(big1.cur.tot)} votos` },
+      { k: `Segundo pico (${big2.name})`, v: `${fmt(big2.cur.tot)} votos` },
+      { k: `Menor coluna (${small1.name})`, v: `${fmt(small1.cur.tot)} votos` },
+    ],
+    state: { raceId, raise: 1, colorMode: 'margin', split: false },
+    cam:   { pos: [18, 175, 215], target: [8, 12, 8] },
+    pins: [
+      { county: big1.name, sub: `${fmt(big1.cur.tot)} votos` },
+      { county: big2.name, sub: `${fmt(big2.cur.tot)} votos` },
+    ],
+  },
+  {
+    tag: 'Passo 5 de 6 · Nenhum município é 100% de um lado só',
+    headline: `Divida cada coluna em dois e os eleitores da minoria local aparecem.`,
+    body: `O candidato vencedor fica no topo de cada barra e o segundo colocado fica na base. Mesmo onde um partido vence com folga, centenas de milhares de vizinhos votaram no outro lado.`,
+    stats: [
+      { k: `PT em ${big1.name}`, v: fmt(big1.cur.d), cls: 'dem' },
+      { k: `PL em ${big1.name}`, v: fmt(big1.cur.r), cls: 'rep' },
+      { k: `Total estadual`, v: fmt(totStateVotes) },
+    ],
+    state: { raceId, raise: 1, colorMode: 'margin', split: true },
+    cam:   { pos: [-25, 165, 210], target: [10, 14, 10] },
+    pins: [
+      { county: big1.name, sub: `${fmt(big1.cur.d)} PT · ${fmt(big1.cur.r)} PL` },
+    ],
+  },
+  {
+    tag: 'Passo 6 de 6 · Explore livremente',
+    headline: `Gire, aproxime ou troque para qualquer disputa de 2026, 2022 ou 2018.`,
+    body: `Arraste para girar o mapa em 3D, role para dar zoom, ou clique em "Explorar todos os cargos" para comparar Presidente, Governador, Senado e Deputados em todas as 27 UFs.`,
+    stats: [
+      { k: 'UFs disponíveis', v: 'Todas as 27 UFs' },
+      { k: 'Eleições incluídas', v: '2026, 2022 e 2018' },
+      { k: 'Malha geográfica', v: 'IBGE Oficial' },
+    ],
+    state: { raceId, raise: 1, colorMode: 'lead', split: true },
+    cam:   { pos: [0, 205, 225], target: [0, 8, 6] },
+    pins:  [],
+  },
 ];
 
-// The timeline: a flight to each scene, then long enough to read its card. The last scene stays until the reader moves on.
-const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
-const FLY = REDUCED ? 0.6 : 4, WORDS_PER_SECOND = 3.2, MIN_HOLD = 5;
-let END = 0;
-STEPS.forEach((s, i) => {
-  const words = s.card().replace(/<[^>]+>/g, ' ').trim().split(/\s+/).length;
-  s.fly = i ? FLY : 0;
-  s.hold = Math.max(MIN_HOLD, words / WORDS_PER_SECOND);
-  s.start = END;
-  END += s.fly + (i < STEPS.length - 1 ? s.hold : 0);
+const dotsEl = document.getElementById('dots');
+STEPS.forEach((_, i) => {
+  const d = document.createElement('div');
+  d.className = 'dot';
+  d.onclick = () => { stopAuto(); go(i); };
+  dotsEl.appendChild(d);
 });
 
-// ---------- scene ----------
-const stage = $('stage');
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-stage.appendChild(renderer.domElement);
-const scene = new THREE.Scene();
-const BG = new THREE.Color('#0e1116');
-scene.background = BG;
-const camera = new THREE.PerspectiveCamera(30, 1, 5, 20000);
-scene.add(new THREE.HemisphereLight(0xffffff, 0x334455, 1.1));
-const sun = new THREE.DirectionalLight(0xffffff, 1.6); sun.position.set(-600, 900, 700); scene.add(sun);
+let idx = 0;
+let activePins = [];
 
-// Columns are stacked by vote (map3d.js): runner-up at the bottom, third-party and write-ins in gray, winner on top.
-const { mapGroup, pickables, P } = buildMap(scene, us, counties, { maxTotal: big.total, edgeOpacity: 0.45 });
-for (const c of counties) Object.assign(c, { color: new THREE.Color(winnerColor(c)), lit: 1,
-  lowerColor: new THREE.Color(c.dem > c.rep ? LOSER_C.rep : LOSER_C.dem), middleColor: new THREE.Color(OTHER_C) });
-// rise order: small counties first, so the cities rise last
-[...counties].sort((a, b) => a.total - b.total).forEach((c, i, a) => c.delay = 0.3 * i / a.length);
-$('loading').remove();
+function rebuildPins(pins) {
+  callouts.innerHTML = '';
+  activePins = (pins || []).map(p => {
+    const c = map.getCounty(p.county);
+    if (!c) return null;
+    const el = document.createElement('div');
+    el.className = 'callout';
+    el.innerHTML = `
+      <div class="box">${c.name}<span class="sub">${p.sub || ''}</span></div>
+      <div class="stem"></div>
+      <div class="dot-pin"></div>
+    `;
+    callouts.appendChild(el);
+    return { c, el };
+  }).filter(Boolean);
+}
 
-// ---------- camera poses ----------
-const ease = t => t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
-const clamp01 = x => Math.min(1, Math.max(0, x));
-const halfFov = THREE.MathUtils.degToRad(camera.fov / 2);
-let W = 1, H = 1, area = { w: 1, h: 1, ox: 0, oy: 0 }; // the screen, and the part of it left free for the map
-let spin = 0;
-// the camera for step s: a spherical offset (r, phi, theta) around a target point
-function poseFor(s) {
-  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, hMax = 0;
-  for (const c of s.view === 'state' ? counties : s.view) {
-    x0 = Math.min(x0, c.box.min.x); y0 = Math.min(y0, c.box.min.y);
-    x1 = Math.max(x1, c.box.max.x); y1 = Math.max(y1, c.box.max.y);
-    hMax = Math.max(hMax, c.target * s.raise);
+map.onTick(() => {
+  for (const p of activePins) {
+    const topY = p.c.curBot + p.c.curMid + p.c.curTop;
+    const s = map.projectToScreen(new THREE.Vector3(p.c.cx, topY, -p.c.cy));
+    p.el.style.display = s.visible ? 'block' : 'none';
+    p.el.style.left = s.x + 'px';
+    p.el.style.top  = s.y + 'px';
   }
-  // fit the counties in the part of the screen the caption and the bars leave free
-  const ext = Math.max((x1 - x0) / 2 / Math.min(area.w / H, 1.6), (y1 - y0) / 2 * H / area.h, hMax * 0.8, 60);
-  const r = (ext * (s.zoom || 1.05)) / Math.tan(halfFov) + 40;
-  return { r, phi: s.phi, theta: s.theta + (s.spin ? spin : 0),
-    target: new THREE.Vector3((x0 + x1) / 2, Math.min(hMax * 0.4, 180), -(y0 + y1) / 2) };
-}
-function setPose(o) {
-  camera.position.setFromSpherical(new THREE.Spherical(o.r, Math.max(o.phi, 1e-4), o.theta)).add(o.target);
-  camera.lookAt(o.target);
-}
-// Fly from pose a to pose b: ease the angles, and pull the camera up and back mid-flight when the hop is long,
-// so a jump from one corner of the state to another reads as a flight rather than a slide.
-function fly(a, b, w) {
-  const dt = Math.atan2(Math.sin(b.theta - a.theta), Math.cos(b.theta - a.theta));
-  const hop = a.target.distanceTo(b.target);
-  return { r: a.r + (b.r - a.r) * w + Math.sin(Math.PI * w) * hop * 0.7,
-    phi: a.phi + (b.phi - a.phi) * w - Math.sin(Math.PI * w) * Math.min(a.phi, b.phi) * 0.25 * clamp01(hop / 400),
-    theta: a.theta + dt * w, target: a.target.clone().lerp(b.target, w) };
-}
-
-// ---------- the clock ----------
-let t = 0, playing = true;
-const sceneAt = time => { let i = 0; while (i + 1 < STEPS.length && STEPS[i + 1].start <= time) i++; return i; };
-function jump(time) { t = Math.max(0, Math.min(time, END)); spin = 0; playing = true; updateButton(); }
-function updateButton() {
-  const label = t >= END ? 'Watch again' : playing ? 'Pause' : 'Play';
-  $('pause').textContent = label; $('pause').setAttribute('aria-label', label);
-}
-$('pause').onclick = () => { if (t >= END) jump(0); else { playing = !playing; updateButton(); } };
-$('prev').onclick = () => { const i = sceneAt(t); jump(STEPS[t - STEPS[i].start < 1.5 && i > 0 ? i - 1 : i].start); };
-$('next').onclick = () => { const i = sceneAt(t); if (i + 1 < STEPS.length) jump(STEPS[i + 1].start); };
-addEventListener('keydown', e => {
-  if (e.key === ' ' && e.target === document.body) { e.preventDefault(); $('pause').click(); }
-  if (e.key === 'ArrowRight') $('next').click();
-  if (e.key === 'ArrowLeft') $('prev').click();
 });
 
-// ---------- caption, labels, key, tooltip ----------
-const cap = $('caption');
-function showCaption(i, first) {
-  cap.classList.add('fade');
-  setTimeout(() => {
-    cap.innerHTML = STEPS[i].card();
-    cap.scrollTop = 0;
-    cap.classList.remove('fade');
-  }, first ? 0 : 350);
-}
-const labelsEl = $('labels');
-// town names for reference on the flat map, clear of everything over the map
-const cityLabels = await createCityLabels(labelsEl, P, { avoid: () => [$('key'), $('topnav'), cap, $('player')] });
-let labelSet = [], curStep = -1;
-function setStep(i) {
-  if (i === curStep) return;
-  showCaption(i, curStep === -1);
-  curStep = i;
-  const s = STEPS[i];
-  const hi = s.hi ? new Set(s.hi) : null;
-  for (const c of counties) {
-    c.litGoal = !hi || hi.has(c) ? 1 : 0;
-    c.colorGoal = new THREE.Color(s.color === 'shift' ? shiftColor(c) : s.color.rows ? winnerColor(s.color.rows[c.i]) : winnerColor(c));
+function go(newIdx) {
+  idx = Math.max(0, Math.min(STEPS.length - 1, newIdx));
+  const s = STEPS[idx];
+  document.getElementById('stepTag').textContent = s.tag;
+  document.getElementById('headline').textContent = s.headline;
+  document.getElementById('body').textContent = s.body;
+  document.getElementById('stats').innerHTML = s.stats.map(st => `
+    <div class="stat">
+      <div class="k">${st.k}</div>
+      <div class="v ${st.cls || ''}">${st.v}</div>
+    </div>
+  `).join('');
+  [...dotsEl.children].forEach((d, i) => d.classList.toggle('on', i === idx));
+  document.getElementById('prev').disabled = idx === 0;
+  const nextBtn = document.getElementById('next');
+  if (idx === STEPS.length - 1) {
+    nextBtn.textContent = 'Abrir explorador completo →';
+  } else {
+    nextBtn.textContent = 'Próximo →';
   }
-  labelsEl.innerHTML = '';
-  labelSet = s.labels.map(c => {
-    const el = document.createElement('div'); el.className = 'label';
-    el.innerHTML = `${c.name}<small>${s.label(c)}</small>`;
-    labelsEl.appendChild(el); return { c, el };
-  });
-  const legLabels = ['<50%', '50–60', '60–70', '70–80', '80–90', '90+'];
-  const row = cols => `<div class="legend">${cols.map((c, j) => `<div><i style="background:${c}"></i>${legLabels[j]}</div>`).join('')}</div>`;
-  $('key').innerHTML = s.color === 'shift'
-    ? `<div class="legend-title">Shift toward ${D.last} (D), 2024 President → 2026 Senate, points</div>
-       <div class="legend">${SHIFT_D.map((c, j) => `<div><i style="background:${c}"></i>${j === 5 ? '50+' : `${SHIFT_BINS[j]}–${SHIFT_BINS[j + 1]}`}</div>`).join('')}</div>`
-    : s.color.rows
-    ? `<div class="legend-title">Republicans got more ${s.color.label} votes · share of county vote</div>${row(REP_C)}
-       <div class="legend-title">Democrats got more</div>${row(DEM_C)}`
-    : `<div class="legend-title">${R.last} (R) won · share of county vote</div>${row(REP_C)}
-       <div class="legend-title">${D.last} (D) won</div>${row(DEM_C)}` +
-      (s.raise ? `<div class="legend-title">Columns are split by vote</div><div class="split-key">
-        <span><i style="background:${LOSER_C.dem}"></i>${D.last}</span><span><i style="background:${LOSER_C.rep}"></i>${R.last}</span><span><i style="background:${OTHER_C}"></i>Others</span></div>` : '');
+  map.applyState(s.state);
+  map.setCamera(s.cam);
+  rebuildPins(s.pins);
 }
 
-const tip = $('tip'), ray = new THREE.Raycaster(), mouse = new THREE.Vector2();
-let hovered = null;
-renderer.domElement.addEventListener('pointermove', e => {
-  const r = renderer.domElement.getBoundingClientRect();
-  mouse.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
-  ray.setFromCamera(mouse, camera);
-  const hit = ray.intersectObjects(pickables, false)[0]; // any segment selects its county
-  hovered = hit ? hit.object.userData : null;
-  if (!hovered) { tip.style.display = 'none'; return; }
-  const c = hovered;
-  tip.innerHTML = `<div class="n">${c.name} County</div>
-    <div class="row"><span>${D.name} (D)</span><span>${fmt(c.dem)} · ${pct(c.dem, c.total, 1)}</span></div>
-    <div class="row"><span>${R.name} (R)</span><span>${fmt(c.rep)} · ${pct(c.rep, c.total, 1)}</span></div>
-    <div class="row m"><span>Total votes</span><span>${fmt(c.total)}</span></div>
-    <div class="row m"><span>2026 Senate margin</span><span style="color:${c.m > 0 ? '#8fa8ff' : '#ff8b8b'}">${mg(c.m, 1)}</span></div>
-    <div class="row m"><span>2024 President margin</span><span style="color:${c.m0 > 0 ? '#8fa8ff' : '#ff8b8b'}">${mg(c.m0, 1)}</span></div>
-    <div class="row m"><span>Land area</span><span>${fmt(Math.round(c.landSqMi))} sq mi</span></div>` +
-    (STEPS[curStep].color.rows ? (() => { const ch = STEPS[curStep].color, h = ch.rows[c.i], h0 = ch.rows0[c.i];
-      return `<div class="row m"><span>2026 ${ch.label}, all districts here</span><span style="color:${h.dem > h.rep ? '#8fa8ff' : '#ff8b8b'}">${cm(h, 1)}</span></div>` +
-        (h0.total ? `<div class="row m"><span>2024 ${ch.label}</span><span style="color:${h0.dem > h0.rep ? '#8fa8ff' : '#ff8b8b'}">${cm(h0, 1)}</span></div>` : ''); })() : '');
-  tip.style.display = 'block';
-  const x = e.clientX - r.left, y = e.clientY - r.top;
-  tip.style.left = Math.max(8, Math.min(x + 14, r.width - tip.offsetWidth - 8)) + 'px';
-  tip.style.top = Math.max(8, Math.min(y + 14, r.height - tip.offsetHeight - 8)) + 'px';
+let timer = null;
+const playBtn = document.getElementById('play');
+function startAuto() {
+  if (timer) return;
+  playBtn.textContent = '⏸ Pausar';
+  timer = setInterval(() => {
+    if (idx < STEPS.length - 1) go(idx + 1);
+    else stopAuto();
+  }, 5500);
+}
+function stopAuto() {
+  if (!timer) return;
+  clearInterval(timer);
+  timer = null;
+  playBtn.textContent = '▶ Reproduzir automaticamente';
+}
+playBtn.onclick = () => timer ? stopAuto() : startAuto();
+
+document.getElementById('prev').onclick = () => { stopAuto(); go(idx - 1); };
+document.getElementById('next').onclick = () => {
+  stopAuto();
+  if (idx === STEPS.length - 1) location.href = STATE.results.href;
+  else go(idx + 1);
+};
+window.addEventListener('keydown', e => {
+  if (e.key === 'ArrowRight' || e.key === ' ') { stopAuto(); go(idx + 1); }
+  if (e.key === 'ArrowLeft') { stopAuto(); go(idx - 1); }
 });
-renderer.domElement.addEventListener('pointerleave', () => { tip.style.display = 'none'; hovered = null; });
 
-// ---------- loop ----------
-function resize() {
-  W = stage.clientWidth; H = stage.clientHeight;
-  renderer.setSize(W, H); camera.aspect = W / H;
-  const wide = W > 760, bar = $('topnav').offsetHeight;
-  stage.parentElement.style.setProperty('--bar', `${bar}px`);
-  // wide screens: the caption sits on the left, so the map is centered in what's to its right; narrow: above the caption
-  area = wide ? { w: W - 440, h: H - 90 - bar, ox: -220, oy: -bar / 2 } : { w: W, h: H * 0.55, ox: 0, oy: H * 0.15 };
-  camera.setViewOffset(W, H, area.ox, area.oy, W, H);
-}
-const fit = new ResizeObserver(resize);
-fit.observe(stage); fit.observe($('topnav'));
-resize();
-
-const paint = (m, color) => { m.material[0].color.copy(color); m.material[1].color.copy(color).multiplyScalar(0.8); };
-const DIM = new THREE.Color('#1f2631'), HOVER = new THREE.Color('#ffffff'), tmp = new THREE.Color(), v = new THREE.Vector3();
-let last = performance.now();
-function frame(now) {
-  const dt = Math.min(0.25, (now - last) / 1000); last = now;
-  if (playing && t < END) { t = Math.min(END, t + dt); if (t >= END) updateButton(); }
-  const i = sceneAt(t), b = STEPS[i], a = STEPS[Math.max(0, i - 1)];
-  // fly in, then hold the camera still while the card is read
-  const k = b.fly ? clamp01((t - b.start) / b.fly) : 1, w = ease(k);
-  setStep(i);
-  if (b.spin && !REDUCED && (playing || t >= END)) spin += dt * 0.08;
-  setPose(fly(poseFor(a), poseFor(b), w));
-  const raise = a.raise + (b.raise - a.raise) * w;
-  $('fill').style.width = `${100 * t / END}%`;
-  const fade = 1 - Math.exp(-dt * 5); // colors and highlights ease toward the current step's
-  for (const c of counties) {
-    layout(c, H_FLAT + (c.target - H_FLAT) * ease(clamp01((raise * 1.3 - c.delay))));
-    c.lit += (c.litGoal - c.lit) * fade;
-    c.color.lerp(c.colorGoal, fade);
-    const lit = 0.18 + 0.82 * c.lit;
-    tmp.copy(DIM).lerp(c.color, lit);
-    if (c === hovered) tmp.lerp(HOVER, 0.35);
-    paint(c.mesh, tmp);
-    if (c.split) {
-      paint(c.lower, tmp.copy(DIM).lerp(c.lowerColor, lit));
-      paint(c.middle, tmp.copy(DIM).lerp(c.middleColor, lit));
-    }
-  }
-  renderer.render(scene, camera);
-  // labels: show only once the camera has settled, and never two on top of each other
-  const show = k > 0.8;
-  const placed = [];
-  for (const { c, el } of labelSet) {
-    v.set(c.cx, c.cy, c.h).applyMatrix4(mapGroup.matrixWorld).project(camera);
-    const x = (v.x + 1) / 2 * W, y = (1 - v.y) / 2 * H, bw = el.offsetWidth, bh = el.offsetHeight;
-    const box = [x - bw / 2, y - bh * 1.2, x + bw / 2, y - bh * 0.2];
-    const clash = placed.some(q => box[0] < q[2] && box[2] > q[0] && box[1] < q[3] && box[3] > q[1]);
-    if (!clash) placed.push(box);
-    el.style.opacity = show && !clash && v.z < 1 ? 1 : 0;
-    el.style.left = x + 'px'; el.style.top = y + 'px';
-  }
-  // hidden once columns rise (a name on the ground would float over the wrong column); clear of the county labels shown
-  cityLabels.update(camera, mapGroup, W, H, 1 - clamp01(raise / 0.2), show ? placed : []);
-  requestAnimationFrame(frame);
-}
-const startAt = +new URLSearchParams(location.search).get('scene'); // 1-based, already arrived
-if (startAt >= 1 && startAt <= STEPS.length) t = STEPS[startAt - 1].start + STEPS[startAt - 1].fly;
-updateButton();
-last = performance.now();
-requestAnimationFrame(frame);
+go(0);

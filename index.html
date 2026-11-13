@@ -1,18 +1,15 @@
 <!doctype html>
-<html lang="en">
+<html lang="pt-BR">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>How America Votes</title>
-<!-- Older links to the Texas map used this address with ?race= or ?voters= -->
-<script>if (/[?&](race|voters)=/.test(location.search)) location.replace('texas.html' + location.search);</script>
-<meta name="description" content="Election results mapped county by county and voter by voter, one state at a time." />
-<link rel="canonical" href="https://johnesco.github.io/usavote/" />
+<title>Como o Brasil Vota</title>
+<script>if (/[?&](race|voters)=/.test(location.search) && !/[?&]uf=/.test(location.search)) location.replace('estado.html?uf=sp&' + location.search.slice(1));</script>
+<meta name="description" content="Resultados eleitorais mapeados município por município e eleitor por eleitor, um estado por vez." />
 <meta property="og:type" content="website" />
-<meta property="og:site_name" content="How America Votes" />
-<meta property="og:url" content="https://johnesco.github.io/usavote/" />
-<meta property="og:title" content="How America Votes" />
-<meta property="og:description" content="Election results mapped county by county and voter by voter, one state at a time." />
+<meta property="og:site_name" content="Como o Brasil Vota" />
+<meta property="og:title" content="Como o Brasil Vota" />
+<meta property="og:description" content="Resultados eleitorais mapeados município por município e eleitor por eleitor, um estado por vez." />
 <meta name="twitter:card" content="summary" />
 <link rel="stylesheet" href="style.css" />
 <link rel="stylesheet" href="home.css" />
@@ -26,9 +23,9 @@
 <body>
 <div class="home">
   <header>
-    <h1>How America Votes</h1>
-    <p>Election results mapped county by county and voter by voter, one state at a time.</p>
-    <p class="why-link"><a href="why.html">Why map votes this way? Same election, three maps →</a></p>
+    <h1>Como o Brasil Vota</h1>
+    <p>Resultados eleitorais mapeados município por município e eleitor por eleitor, um estado por vez.</p>
+    <p class="why-link"><a href="why.html">Por que mapear votos assim? A mesma eleição em três mapas →</a></p>
   </header>
   <div class="layout">
     <div>
@@ -38,16 +35,15 @@
     <div id="ready"></div>
   </div>
   <section class="all">
-    <h2>All states</h2>
+    <h2>Todos os 27 estados e o Distrito Federal</h2>
     <ul id="list"></ul>
   </section>
   <footer>
-    <p>2026 results are unofficial until each state's canvass or certification, and in some states, marked on their pages, ballots were still outstanding. Where dots stand for voters, their spots and colors are estimated.</p>
-    <p>State shapes: U.S. Census Bureau, via <a href="https://github.com/topojson/us-atlas" target="_blank" rel="noopener">us-atlas</a>. TIGER/Line® is a registered trademark of the Census Bureau; this site uses TIGER/Line data and isn't a Census Bureau product. This page counts visits with <a href="https://www.goatcounter.com" target="_blank" rel="noopener">GoatCounter</a>, which uses no cookies and does not collect personal data.</p>
-    <p><a href="sources.html">Sources and credits for every state →</a></p>
+    <p>Os resultados das Eleições Gerais de 2026 (1º e 2º turnos para Presidente, Governador, Senado, Câmara e Assembleias) e do histórico 2018–2022 cobrem todas as 27 Unidades da Federação (5.570 municípios). Onde pontos representam eleitores, as posições e cores são estimadas dentro das respectivas zonas eleitorais ponderadas pelo Censo IBGE 2022.</p>
+    <p>Malhas estaduais e municipais oficiais: <a href="https://www.ibge.gov.br/geociencias/organizacao-do-territorio/malhas-territoriais.html" target="_blank" rel="noopener">IBGE (Instituto Brasileiro de Geografia e Estatística)</a>. Dados eleitorais: <a href="https://dadosabertos.tse.jus.br/" target="_blank" rel="noopener">Tribunal Superior Eleitoral (TSE)</a>.</p>
+    <p><a href="sources.html">Fontes e créditos de todos os estados →</a></p>
   </footer>
 </div>
 <script type="module" src="home.js"></script>
-<script id="gc" data-goatcounter="https://texaslooksred.goatcounter.com/count" async src="https://gc.zgo.at/count.js"></script>
 </body>
 </html>

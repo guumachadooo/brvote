@@ -1,57 +1,87 @@
 <!doctype html>
-<html lang="en">
+<html lang="pt-BR">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Misreading the Map: Texas 2026</title>
-<meta name="description" content="A guided flight over the 2026 U.S. Senate race in Texas, one misreading at a time: why the flat county map looks red when the Democrat won, shown with one dot per voter, placed by county, then by precinct, then by census block." />
-<link rel="canonical" href="https://johnesco.github.io/usavote/misread.html" />
-<meta property="og:type" content="article" />
-<meta property="og:site_name" content="How America Votes" />
-<meta property="og:url" content="https://johnesco.github.io/usavote/misread.html" />
-<meta property="og:title" content="Misreading the map: why Texas looked red when the Democrat won" />
-<meta property="og:description" content="Five ways the flat county map is misread, step by step, with one dot per voter." />
-<meta property="og:image" content="https://johnesco.github.io/usavote/share.png" />
-<meta name="twitter:card" content="summary_large_image" />
-<meta name="twitter:image" content="https://johnesco.github.io/usavote/share.png" />
-<link rel="stylesheet" href="style.css" />
-<link rel="stylesheet" href="voters.css" />
-<link rel="stylesheet" href="story.css" />
+<title>Três Formas pelas Quais um Mapa Eleitoral Engana</title>
+<meta name="description" content="Um guia visual interativo sobre por que os mapas planos de vencedores por município distorcem nossa leitura das eleições." />
+<meta property="og:type" content="website" />
+<meta property="og:site_name" content="Como o Brasil Vota" />
+<meta property="og:title" content="Três Formas pelas Quais um Mapa Eleitoral Engana" />
+<meta property="og:description" content="Um guia visual interativo sobre por que os mapas planos de vencedores por município distorcem nossa leitura das eleições." />
+<meta name="twitter:card" content="summary" />
 <link rel="stylesheet" href="misread.css" />
 <script type="importmap">
-{ "imports": {
-  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-  "d3-geo": "https://cdn.jsdelivr.net/npm/d3-geo@3.1.1/+esm",
-  "topojson-client": "https://cdn.jsdelivr.net/npm/topojson-client@3.1.0/+esm"
-} }
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+    "d3-geo": "https://cdn.jsdelivr.net/npm/d3-geo@3.1.1/+esm",
+    "topojson-client": "https://cdn.jsdelivr.net/npm/topojson-client@3.1.0/+esm"
+  }
+}
 </script>
 </head>
-<body class="voters-page">
-<!-- A guided flight over the dot view's map (misread.js): the flat county map first, then the same votes as dots, placed by
-     county, then by precinct, then by census block. ?scene=N opens on scene N; ?record=1 hides the controls and waits for
-     window.misread.seek(seconds), for recording a video frame by frame. -->
-<main class="voters misread">
-  <div id="stage"></div>
-  <div id="labels"></div>
-  <div id="loading">Loading map…</div>
-  <section class="caption" id="caption" aria-live="polite"></section>
-  <header class="topnav" id="topnav">
-    <nav class="nav-row" aria-label="Misreading the Map">
-      <a class="back" id="back" href="voters.html">← Dot view</a>
-      <span class="flight-badge">Misreading the Map · 2026 U.S. Senate</span>
+<body>
+<div class="page">
+  <header class="topbar">
+    <div class="brand"><b>Como lemos os mapas errado</b> · Um guia visual em três partes</div>
+    <nav class="links">
+      <a href="story.html" id="linkStory">← Tour pelos municípios</a>
+      <a href="shade-by-votes.html" id="linkShade">Pintar pelo saldo de votos →</a>
+      <a href="estado.html" id="linkExplore">Explorar todos os cargos →</a>
     </nav>
-    <div class="nav-info"><div class="legend-dots" id="legend" aria-hidden="true"></div></div>
   </header>
-  <ol class="steps" id="steps" aria-hidden="true"></ol>
-  <div class="scalebar" id="scalebar" aria-hidden="true"><i></i><span></span></div>
-  <div class="player" id="player">
-    <button class="ghost" id="prev" aria-label="Previous scene">‹</button>
-    <button id="pause" aria-label="Pause">Pause</button>
-    <button class="ghost" id="next" aria-label="Next scene">›</button>
-    <div class="track" id="track" aria-hidden="true"><i id="fill"></i></div>
+
+  <div class="body">
+    <div class="rail" id="rail">
+      <div class="intro">
+        <div class="kicker">Cartografia Eleitoral</div>
+        <h1>Três maneiras pelas quais um mapa eleitoral padrão engana o seu olhar</h1>
+        <p>Toda noite de apuração vemos o mesmo mapa: municípios pintados de vermelho ou azul sólido. Ele está correto nos dados brutos, mas ensina três ideias equivocadas sobre quem realmente mora ali. Role ou clique em cada seção.</p>
+      </div>
+
+      <section class="step on" data-step="0">
+        <div class="num">Equívoco 1 · Área parece gente</div>
+        <h2>Quilômetros quadrados de área rural pesam o mesmo que milhões de eleitores</h2>
+        <p id="step0Text">No mapa plano, dezenas de municípios extensos de baixa densidade ocupam grande parte da tela — mesmo somando menos votos que uma única capital.</p>
+        <div class="compare" id="cmp0"></div>
+        <button class="try" data-action="toggle-raise">Alternar plano ↔ 3D</button>
+      </section>
+
+      <section class="step" data-step="1">
+        <div class="num">Equívoco 2 · O vencedor leva toda a cor</div>
+        <h2>Vencer por 51–49 pinta o município inteiro como se 49% não existissem</h2>
+        <p id="step1Text">Nas grandes cidades e polos regionais, o segundo colocado recebe centenas de milhares de votos. Um mapa de cor única apaga completamente a minoria local.</p>
+        <div class="compare" id="cmp1"></div>
+        <button class="try" data-action="toggle-split">Alternar cor única ↔ coluna dividida</button>
+      </section>
+
+      <section class="step" data-step="2">
+        <div class="num">Equívoco 3 · Margem % não é saldo de votos</div>
+        <h2>Uma vantagem de 80–20 em 2.000 votos brilha mais que 55–45 em 1 milhão</h2>
+        <p>Pintar pela margem percentual dá o tom mais escuro aos menores municípios rurais e deixa as metrópoles pálidas — exatamente o oposto de onde a eleição é decidida em votos absolutos.</p>
+        <div class="compare" id="cmp2"></div>
+        <button class="try" data-action="toggle-color">Alternar margem % ↔ saldo de votos</button>
+      </section>
+
+      <section class="step" data-step="3">
+        <div class="num">A correção · Veja as três coisas ao mesmo tempo</div>
+        <h2>Altura = número de eleitores · Coluna dividida = ambos os lados · Cor = saldo de votos</h2>
+        <p>Juntando os três ajustes, o mapa conta a história real: grandes colunas divididas nas áreas urbanas e colinas suaves no interior.</p>
+        <p style="margin-top:10px"><a class="cta" id="ctaExplore" href="estado.html">Abrir o explorador interativo completo →</a></p>
+      </section>
+    </div>
+
+    <div class="stage-wrap">
+      <div class="caption-bar" id="captionBar"></div>
+      <div id="stage">
+        <div id="callouts"></div>
+      </div>
+    </div>
   </div>
-</main>
+</div>
+
 <script type="module" src="misread.js"></script>
-<script id="gc" data-goatcounter="https://texaslooksred.goatcounter.com/count" async src="https://gc.zgo.at/count.js"></script>
 </body>
 </html>

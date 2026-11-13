@@ -1,72 +1,149 @@
 <!doctype html>
-<html lang="en">
+<html lang="pt-BR">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Dot View: Texas Election Results</title>
-<meta name="description" content="A map of Texas with one dot for each voter, in any race. Go to any city, county or precinct, down to single voters, or play the Texas Population Density Tour." />
-<link rel="canonical" href="https://johnesco.github.io/usavote/voters.html" />
-<meta property="og:type" content="article" />
-<meta property="og:site_name" content="How America Votes" />
-<meta property="og:url" content="https://johnesco.github.io/usavote/voters.html" />
-<meta property="og:title" content="Dot view: 9.9 million Texans, one dot each" />
-<meta property="og:description" content="Explore Texas with one dot for every voter, from Loving County's 67 voters to Dallas County's 783,714, or play the Texas Population Density Tour." />
-<meta property="og:image" content="https://johnesco.github.io/usavote/share.png" />
-<meta name="twitter:card" content="summary_large_image" />
-<meta name="twitter:image" content="https://johnesco.github.io/usavote/share.png" />
+<title>Onde os Eleitores Moram — Densidade de Pontos</title>
+<meta name="description" content="Resultados eleitorais do Brasil mapeados como pontos de eleitores, onde áreas sem população ficam escuras e as cidades brilham." />
+<meta property="og:type" content="website" />
+<meta property="og:site_name" content="Como o Brasil Vota" />
+<meta property="og:title" content="Onde os Eleitores Moram — Densidade de Pontos" />
+<meta property="og:description" content="Resultados eleitorais do Brasil mapeados como pontos de eleitores, onde áreas sem população ficam escuras e as cidades brilham." />
+<meta name="twitter:card" content="summary" />
 <link rel="stylesheet" href="style.css" />
 <link rel="stylesheet" href="voters.css" />
 <script type="importmap">
-{ "imports": {
-  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-  "d3-geo": "https://cdn.jsdelivr.net/npm/d3-geo@3.1.1/+esm",
-  "topojson-client": "https://cdn.jsdelivr.net/npm/topojson-client@3.1.0/+esm"
-} }
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+    "d3-geo": "https://cdn.jsdelivr.net/npm/d3-geo@3.1.1/+esm",
+    "topojson-client": "https://cdn.jsdelivr.net/npm/topojson-client@3.1.0/+esm"
+  }
+}
 </script>
 </head>
-<body class="voters-page">
-<main class="voters exploring">
-  <div id="stage"></div>
-  <div id="labels"></div>
-  <div id="loading">Loading map…</div>
-  <section class="caption" id="caption" aria-live="polite"></section>
-  <header class="topnav" id="topnav">
-    <nav class="nav-row" aria-label="Dot view">
-      <a class="back" id="back" href="texas.html">← Bar view</a>
-      <button class="ghost" id="goHome" title="Back to the whole state">Whole state</button>
-      <span class="flight-badge" id="flightBadge">Texas Population Density Tour · 2026 U.S. Senate</span>
-      <div class="nav-group"><label>Year <select id="year"></select></label><label class="grow">Race <select id="race"></select></label></div>
-      <div class="nav-group" role="group" aria-label="Go to a place">
-        <span class="nav-label">Go to</span>
-        <select id="goCity" aria-label="Go to a city"><option value="">City…</option></select>
-        <select id="goCounty" aria-label="Go to a county"><option value="">County…</option></select>
-        <select id="goPrecinct" aria-label="Go to a precinct in the county" title="Pick a county first" disabled><option value="">Precinct…</option></select>
-      </div>
-      <div class="nav-group nav-flight">
-        <span class="nav-label">Guided flight</span>
-        <button id="tourPlay">▶ Texas Population Density Tour</button>
-        <button class="ghost" id="tourRestart" hidden>Start over</button>
-        <a class="flight-link" href="misread.html" title="Why the flat county map looks red, one misreading at a time, with these dots placed by county, then precinct, then block">▶ Misreading the Map</a>
-      </div>
-    </nav>
-    <div class="nav-info">
-      <span id="raceCount"></span>
-      <span id="placeInfo" aria-live="polite"></span>
-      <span class="nav-note"><span id="raceStatus" aria-live="polite">Drag to move. Scroll, pinch or double-click to zoom.</span> Spots and colors are estimated.</span>
-      <details class="how"><summary>How?</summary><p>Each county's total for the race is real. Its voters are placed by how each party's 2024 Senate vote was spread across the county's precincts, then by where adults lived in 2020. Zoomed far out, dots stacked on the same pixel are left out, since only the top one could show; closer in, every voter's dot is drawn.</p></details>
-      <div class="legend-dots" id="legend" aria-hidden="true"></div>
+<body>
+<div class="layout">
+  <aside>
+    <div class="views" id="views"></div>
+
+    <div>
+      <div class="kicker" id="kicker">Densidade de pontos · Eleitores, não área</div>
+      <h1 id="title">Onde os eleitores moram</h1>
+      <p class="sub" id="raceLine"></p>
     </div>
-  </header>
-  <div class="scalebar" id="scalebar" aria-hidden="true"><i></i><span></span></div>
-  <div class="player" id="player">
-    <button class="ghost" id="prev" aria-label="Previous scene">‹</button>
-    <button id="pause" aria-label="Pause">Pause</button>
-    <button class="ghost" id="next" aria-label="Next scene">›</button>
-    <div class="track" id="track" aria-hidden="true"><i id="fill"></i></div>
-    <button class="ghost" id="explore" title="Pause the tour and move around the map yourself">Explore</button>
-  </div>
-</main>
+
+    <div class="headline" id="headline">Carregando resultados…</div>
+
+    <div class="section">
+      <h2>A ideia</h2>
+      <div class="caption" style="margin-top:0" id="idea">
+        Um mapa plano pinta cada quilômetro quadrado de azul ou vermelho — mesmo onde quase ninguém mora.
+        Aqui, a terra sem moradores fica escura. Cada ponto é um grupo real de eleitores daquele partido, posicionado dentro da zona eleitoral onde votaram.
+      </div>
+    </div>
+
+    <div class="section" id="tourSection">
+      <h2>Tour guiado pela densidade demográfica</h2>
+      <div class="tour-card">
+        <div class="tour-top">
+          <span class="tour-step" id="tourStep">Parada 1 de 7</span>
+          <button id="tourPlay" class="active">▶ Reproduzir tour</button>
+        </div>
+        <div class="tour-title" id="tourTitle">Visão geral do estado</div>
+        <div class="tour-body" id="tourBody">
+          Grande parte do território fica quase vazia; os votos concentram-se nas áreas metropolitanas e polos regionais.
+        </div>
+        <div class="tour-nav">
+          <button id="tourPrev">← Anterior</button>
+          <div class="tour-dots" id="tourDots"></div>
+          <button id="tourNext">Próxima →</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>Legenda</h2>
+      <div class="dot-legend">
+        <div><span class="dot sw-r"></span> Eleitores PL / Conservador</div>
+        <div><span class="dot sw-d"></span> Eleitores PT / Trabalhista</div>
+        <div><span class="dot sw-o"></span> Outros / Terceira via</div>
+      </div>
+      <div class="caption" id="scaleNote"></div>
+    </div>
+
+    <div class="section">
+      <h2 id="yearTitle">Todos os cargos neste ano</h2>
+      <table class="cmp-table" id="yearTable"></table>
+    </div>
+
+    <div class="section" id="officeBlock">
+      <h2 id="officeTitle">Este cargo ao longo dos anos</h2>
+      <table class="cmp-table" id="officeTable"></table>
+    </div>
+
+    <div class="section">
+      <h2>Método</h2>
+      <div class="caption" id="method" style="margin-top:0"></div>
+    </div>
+
+    <div class="note" id="sources"></div>
+  </aside>
+
+  <main>
+    <div class="races" id="races">
+      <div class="view-row">
+        <div class="mode-switch">
+          <a id="modeCols" class="mode-btn" href="estado.html">Visão em Colunas</a>
+          <a id="modeDots" class="mode-btn active" href="voters.html">Visão em Pontos</a>
+        </div>
+      </div>
+      <div class="picker-row" id="picker">
+        <label class="pick"><span>Ano</span><select id="yearSelect"></select></label>
+        <label class="pick"><span>Disputa</span><select id="raceSelect"></select></label>
+      </div>
+      <div class="go-row" id="goRow">
+        <select id="goCity"><option value="">Ir para cidade…</option></select>
+        <select id="goCounty"><option value="">Ir para município…</option></select>
+        <select id="goPrecinct" disabled><option value="">Zona eleitoral (escolha um município)…</option></select>
+      </div>
+      <div class="info-row">
+        <div class="place-info" id="placeInfo"></div>
+        <span class="hint" id="hint">Arraste para mover · Role para aproximar · Clique direito para inclinar</span>
+      </div>
+    </div>
+
+    <div class="controls">
+      <div class="pill">
+        <span id="dotCount" style="color:var(--muted);font-variant-numeric:tabular-nums"></span>
+      </div>
+      <div class="pill">
+        <label>Tamanho do ponto</label>
+        <input id="dotSize" type="range" min="60" max="200" value="100" />
+      </div>
+      <div class="pill">
+        <button id="toggleLines" class="active">Limites municipais</button>
+        <button id="toggleLabels" class="active">Rótulos de cidades</button>
+      </div>
+      <div class="pill">
+        <button id="dragMode" title="Alternar entre mover o mapa e girar o mapa ao arrastar com o botão esquerdo">Arrastar move</button>
+        <button id="reset">Centralizar</button>
+      </div>
+    </div>
+
+    <div id="stage">
+      <div id="labels"></div>
+      <div id="busy" aria-live="polite" aria-busy="false">
+        <div class="busy-card"><span class="busy-spin"></span><span id="busyText">Posicionando pontos de eleitores…</span></div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<div id="tooltip"></div>
+
+<script type="module" src="sitenav.js"></script>
 <script type="module" src="voters.js"></script>
-<script id="gc" data-goatcounter="https://texaslooksred.goatcounter.com/count" async src="https://gc.zgo.at/count.js"></script>
 </body>
 </html>

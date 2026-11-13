@@ -1,63 +1,104 @@
-// The U.S. homepage: a map of the states and the ways to see each state that's ready (state.js). Every other state shows
-// as not available yet. The list of states needs no download, so it still works if the map's shapes don't load.
-import { geoAlbersUsa, geoPath } from 'd3-geo';
-import { feature } from 'topojson-client';
+// Mapa da página inicial original do usavote adaptado para a malha oficial do IBGE das 27 UFs
+import { geoMercator, geoPath, geoCentroid } from 'd3-geo';
 import { STATES } from './state.js';
 
-const US_STATES = [['01','Alabama'],['02','Alaska'],['04','Arizona'],['05','Arkansas'],['06','California'],['08','Colorado'],
-  ['09','Connecticut'],['10','Delaware'],['11','District of Columbia'],['12','Florida'],['13','Georgia'],['15','Hawaii'],
-  ['16','Idaho'],['17','Illinois'],['18','Indiana'],['19','Iowa'],['20','Kansas'],['21','Kentucky'],['22','Louisiana'],
-  ['23','Maine'],['24','Maryland'],['25','Massachusetts'],['26','Michigan'],['27','Minnesota'],['28','Mississippi'],
-  ['29','Missouri'],['30','Montana'],['31','Nebraska'],['32','Nevada'],['33','New Hampshire'],['34','New Jersey'],
-  ['35','New Mexico'],['36','New York'],['37','North Carolina'],['38','North Dakota'],['39','Ohio'],['40','Oklahoma'],
-  ['41','Oregon'],['42','Pennsylvania'],['44','Rhode Island'],['45','South Carolina'],['46','South Dakota'],['47','Tennessee'],
-  ['48','Texas'],['49','Utah'],['50','Vermont'],['51','Virginia'],['53','Washington'],['54','West Virginia'],['55','Wisconsin'],['56','Wyoming']];
-const NAME = new Map(US_STATES);
-const READY = new Map(STATES.map(s => [s.fips, s]));
-const $ = id => document.getElementById(id);
-const opens = s => s.results.href;
+const readyByCode = new Map(STATES.map(s => [s.code, s]));
 
-// the panel for each state that's ready
-$('ready').innerHTML = STATES.map(s => `
-  <section class="state-card" aria-labelledby="st-${s.fips}">
-    <div class="kicker">Available now</div>
-    <h2 id="st-${s.fips}">${s.name}</h2>
-    <p class="summary">${s.summary}</p>
-    <a class="view first" href="${s.results.href}"><b>${s.results.title} →</b><span>${s.results.text}</span></a>
-  </section>`).join('');
-
-// every state, for finding one by name
-$('list').innerHTML = US_STATES.map(([f, n]) => READY.has(f)
-  ? `<li><a class="on" href="${opens(READY.get(f))}">${n}</a></li>`
-  : `<li><span>${n}</span></li>`).join('');
-
-// the map
-const status = $('status');
-const idle = `${STATES.map(s => s.name).join(', ')} ${STATES.length > 1 ? 'are' : 'is'} ready. Other states aren't available yet.`;
-status.textContent = idle;
-try {
-  const r = await fetch('https://cdn.jsdelivr.net/npm/us-atlas@3.0.1/states-10m.json');
-  if (!r.ok) throw new Error(r.status);
-  const us = await r.json();
-  const all = feature(us, us.objects.states).features.filter(f => NAME.has(String(f.id)));
-  const W = 960, H = 600;
-  const path = geoPath(geoAlbersUsa().fitSize([W, H], { type: 'FeatureCollection', features: all }));
-  $('map').innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="group" aria-label="Map of the United States">` +
-    all.filter(f => !READY.has(String(f.id))).map(f =>
-      `<path class="st" data-f="${f.id}" d="${path(f)}"><title>${NAME.get(String(f.id))}: not available yet</title></path>`).join('') +
-    // ready states last, so their outlines sit on top
-    all.filter(f => READY.has(String(f.id))).map(f => { const s = READY.get(String(f.id)); return `
-      <a href="${opens(s)}" aria-label="${s.name}: see the results"><path class="st on" data-f="${f.id}" d="${path(f)}"><title>${s.name}</title></path>` +
-      `<text class="st-name" x="${path.centroid(f)[0]}" y="${path.centroid(f)[1]}">${s.mapLabel ?? s.name}</text></a>`; }).join('') +
-    `</svg>`;
-  const say = e => {
-    const f = e.target.closest?.('[data-f]')?.dataset.f;
-    status.textContent = !f ? idle : READY.has(f) ? `${NAME.get(f)}: see the results` : `${NAME.get(f)}: not available yet`;
-  };
-  $('map').addEventListener('pointermove', say);
-  $('map').addEventListener('pointerdown', say);
-  $('map').addEventListener('pointerleave', () => { status.textContent = idle; });
-} catch (e) {
-  console.error('The map of the states did not load', e);
-  $('map').hidden = true;
+const readyEl = document.getElementById('ready');
+for (const s of STATES) {
+  const card = document.createElement('div');
+  card.className = 'state-card';
+  card.id = 'card-' + s.slug;
+  let views = `
+    <a class="view first" href="${s.results.href}">
+      <div class="view-title"><span>${s.results.title}</span><span class="go">Abrir →</span></div>
+      <p>${s.results.desc}</p>
+    </a>`;
+  if (s.dots) {
+    views += `
+    <a class="view" href="${s.dots}">
+      <div class="view-title"><span>Onde os eleitores moram (densidade de pontos)</span><span class="go">Abrir →</span></div>
+      <p>Cada ponto é um grupo de eleitores em ${s.name}${s.tour ? ', com tour guiado de densidade demográfica' : ''}.</p>
+    </a>`;
+  }
+  card.innerHTML = `
+    <div class="kicker">${s.results.kicker}</div>
+    <h2>${s.name}</h2>
+    <p class="summary">${s.results.summary}</p>
+    ${views}
+  `;
+  readyEl.appendChild(card);
 }
+
+const listEl = document.getElementById('list');
+const sortedStates = [...STATES].sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
+for (const s of sortedStates) {
+  const li = document.createElement('li');
+  li.className = 'on';
+  li.innerHTML = `<a href="${s.results.href}">${s.name} (${s.code})</a>`;
+  listEl.appendChild(li);
+}
+
+const status = document.getElementById('status');
+const defaultStatus = 'Clique em qualquer estado para abrir o mapa 3D interativo (27 de 27 UFs prontas).';
+status.textContent = defaultStatus;
+
+const geo = await fetch('data/br-ufs.json').then(r => r.json());
+const states = geo.features || [];
+
+const W = 720, H = 680;
+const proj = geoMercator().fitSize([W - 24, H - 24], { type: 'FeatureCollection', features: states });
+proj.translate([proj.translate()[0] + 12, proj.translate()[1] + 12]);
+const path = geoPath(proj);
+
+const NS = 'http://www.w3.org/2000/svg';
+const svg = document.createElementNS(NS, 'svg');
+svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+svg.setAttribute('role', 'img');
+svg.setAttribute('aria-label', 'Mapa dos estados do Brasil');
+
+const labelQueue = [];
+
+for (const f of states) {
+  const code = (f.properties?.sigla || f.id || '').toUpperCase();
+  const s = readyByCode.get(code);
+  const d = path(f);
+  if (!d) continue;
+  const p = document.createElementNS(NS, 'path');
+  p.setAttribute('d', d);
+  p.setAttribute('class', s ? 'st on' : 'st soon');
+  p.dataset.uf = (s ? s.slug : code.toLowerCase());
+  if (s) {
+    p.setAttribute('tabindex', '0');
+    p.setAttribute('role', 'link');
+    p.setAttribute('aria-label', `${s.name} — abrir mapa`);
+    const go = () => { location.href = s.results.href; };
+    p.addEventListener('click', go);
+    p.addEventListener('keydown', e => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); }
+    });
+    p.addEventListener('mouseenter', () => {
+      status.innerHTML = `<b>${s.name} (${s.code})</b> — ${s.counties} ${s.slug === 'df' ? 'regiões administrativas' : 'municípios'} · clique para abrir o mapa interativo`;
+    });
+    const c = path.centroid(f);
+    if (c && isFinite(c[0]) && isFinite(c[1])) {
+      labelQueue.push({ code: s.code, x: c[0], y: c[1] });
+    }
+  } else {
+    const c = geoCentroid(f);
+    if (c) p.dataset.lon = c[0];
+  }
+  p.addEventListener('mouseleave', () => { status.textContent = defaultStatus; });
+  svg.appendChild(p);
+}
+
+for (const l of labelQueue) {
+  const t = document.createElementNS(NS, 'text');
+  t.setAttribute('class', 'st-name');
+  t.setAttribute('x', l.x);
+  t.setAttribute('y', l.y + 4);
+  t.textContent = l.code;
+  svg.appendChild(t);
+}
+
+document.getElementById('map').appendChild(svg);

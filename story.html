@@ -1,52 +1,57 @@
 <!doctype html>
-<html lang="en">
+<html lang="pt-BR">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Texas, County by County</title>
-<meta name="description" content="A guided flythrough of the 2026 U.S. Senate race in Texas: the empty red counties, the big-city columns, the suburbs and border counties that flipped, how every county moved, and the Texas House and U.S. House races down the ballot." />
-<link rel="canonical" href="https://johnesco.github.io/usavote/story.html" />
-<meta property="og:type" content="article" />
-<meta property="og:site_name" content="How America Votes" />
-<meta property="og:url" content="https://johnesco.github.io/usavote/story.html" />
-<meta property="og:title" content="Texas, county by county: a flythrough of the 2026 Senate race" />
-<meta property="og:description" content="Fly over Texas's 254 counties: where the votes are, which counties flipped since 2024, and how every county moved." />
-<meta property="og:image" content="https://johnesco.github.io/usavote/share.png" />
-<meta name="twitter:card" content="summary_large_image" />
-<meta name="twitter:image" content="https://johnesco.github.io/usavote/share.png" />
-<link rel="stylesheet" href="style.css" />
-<link rel="stylesheet" href="voters.css" />
+<title>Tour Guiado pelos Municípios — Terra vs. Eleitores</title>
+<meta name="description" content="Um sobrevoo guiado pelos municípios brasileiros mostrando como a população e os votos se distribuem no território." />
+<meta property="og:type" content="website" />
+<meta property="og:site_name" content="Como o Brasil Vota" />
+<meta property="og:title" content="Tour Guiado pelos Municípios — Terra vs. Eleitores" />
+<meta property="og:description" content="Um sobrevoo guiado pelos municípios brasileiros mostrando como a população e os votos se distribuem no território." />
+<meta name="twitter:card" content="summary" />
 <link rel="stylesheet" href="story.css" />
 <script type="importmap">
-{ "imports": {
-  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-  "d3-geo": "https://cdn.jsdelivr.net/npm/d3-geo@3.1.1/+esm",
-  "topojson-client": "https://cdn.jsdelivr.net/npm/topojson-client@3.1.0/+esm"
-} }
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+    "d3-geo": "https://cdn.jsdelivr.net/npm/d3-geo@3.1.1/+esm",
+    "topojson-client": "https://cdn.jsdelivr.net/npm/topojson-client@3.1.0/+esm"
+  }
+}
 </script>
 </head>
-<body class="voters-page">
-<main class="voters">
-  <div id="stage"></div>
-  <div id="labels"></div>
-  <div id="tip"></div>
-  <div id="loading">Loading map…</div>
-  <section class="caption" id="caption" aria-live="polite"></section>
-  <header class="topnav" id="topnav">
-    <nav class="nav-row" aria-label="County Flythrough">
-      <a class="back" href="texas.html?race=u-s-senate">← Bar view</a>
-      <span class="flight-badge">County Flythrough · 2026 U.S. Senate</span>
+<body>
+<div class="story">
+  <header class="topbar">
+    <div class="brand" id="brand"><b>Como o Brasil Vota</b> · Um passeio de 60 segundos pelos municípios</div>
+    <nav class="links">
+      <a href="misread.html" id="linkMisread">Como lemos os mapas errado →</a>
+      <a href="estado.html" id="linkExplore">Explorar todos os cargos →</a>
     </nav>
   </header>
-  <div class="key" id="key" aria-hidden="true"></div>
-  <div class="player" id="player">
-    <button class="ghost" id="prev" aria-label="Previous scene">‹</button>
-    <button id="pause" aria-label="Pause">Pause</button>
-    <button class="ghost" id="next" aria-label="Next scene">›</button>
-    <div class="track" id="track" aria-hidden="true"><i id="fill"></i></div>
+
+  <div id="stage">
+    <div id="callouts"></div>
   </div>
-</main>
+
+  <div class="card-dock">
+    <div class="card">
+      <div class="step-tag" id="stepTag">Passo 1 de 6</div>
+      <h1 id="headline"></h1>
+      <p id="body"></p>
+      <div class="stat-row" id="stats"></div>
+      <div class="nav">
+        <button id="prev">← Voltar</button>
+        <div class="dots" id="dots"></div>
+        <button id="play">▶ Reproduzir automaticamente</button>
+        <button id="next" class="primary">Próximo →</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script type="module" src="story.js"></script>
-<script id="gc" data-goatcounter="https://texaslooksred.goatcounter.com/count" async src="https://gc.zgo.at/count.js"></script>
 </body>
 </html>

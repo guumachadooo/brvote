@@ -3,10 +3,19 @@
   "version": "1.0.0",
   "description": "Visualização 3D das eleições no Brasil",
   "scripts": {
-    "dev": "npx vite",
-    "start": "npx serve ."
+    "dev": "vite --port 3000 --host 0.0.0.0",
+    "build": "vite build",
+    "lint": "node --check home.js app.js state.js voters.js dots.js dots-worker.js shade-by-votes.js sources.js sitenav.js places.js cities.js colors.js busy.js precinct-columns.js story.js misread.js map3d.js",
+    "build:data": "node scripts/build_br_data.mjs",
+    "start": "vite preview --port 3000 --host 0.0.0.0"
   },
   "devDependencies": {
     "vite": "^5.0.0"
+  },
+  "dependencies": {
+    "d3-geo": "^3.1.2",
+    "three": "^0.187.0",
+    "topojson-client": "^3.1.0",
+    "tsx": "^4.23.15"
   }
 }

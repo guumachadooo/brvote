@@ -1,131 +1,77 @@
 <!doctype html>
-<html lang="en">
+<html lang="pt-BR">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Shade by Votes: Texas 2026</title>
-<meta name="description" content="The 2026 U.S. Senate race in Texas, county by county, colored two ways: by each county's percentage, as usual, and by how many votes its lead was worth, so counties where few people voted fade out." />
-<link rel="canonical" href="https://johnesco.github.io/usavote/shade-by-votes.html" />
-<meta property="og:type" content="article" />
-<meta property="og:site_name" content="How America Votes" />
-<meta property="og:url" content="https://johnesco.github.io/usavote/shade-by-votes.html" />
-<meta property="og:title" content="Shade by votes: vote-lead color for county maps" />
-<meta property="og:description" content="The usual county map colors a county of 116 voters darker than one of 783,714. Vote-lead color shades each county by the votes its lead was worth." />
-<meta property="og:image" content="https://johnesco.github.io/usavote/share.png" />
-<meta name="twitter:card" content="summary_large_image" />
-<link rel="stylesheet" href="style.css" />
-<link rel="stylesheet" href="why.css" />
+<title>E se Pintarmos o Mapa pelo Saldo de Votos?</title>
+<meta name="description" content="Um jeito simples de corrigir mapas eleitorais planos sem precisar de 3D: colorir cada município pelo saldo líquido de votos em vez da margem percentual." />
+<meta property="og:type" content="website" />
+<meta property="og:site_name" content="Como o Brasil Vota" />
+<meta property="og:title" content="E se Pintarmos o Mapa pelo Saldo de Votos?" />
+<meta property="og:description" content="Um jeito simples de corrigir mapas eleitorais planos sem precisar de 3D: colorir cada município pelo saldo líquido de votos em vez da margem percentual." />
+<meta name="twitter:card" content="summary" />
 <link rel="stylesheet" href="shade-by-votes.css" />
 <script type="importmap">
-{ "imports": {
-  "d3-geo": "https://cdn.jsdelivr.net/npm/d3-geo@3.1.1/+esm",
-  "topojson-client": "https://cdn.jsdelivr.net/npm/topojson-client@3.1.0/+esm"
-} }
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+    "d3-geo": "https://cdn.jsdelivr.net/npm/d3-geo@3.1.1/+esm",
+    "topojson-client": "https://cdn.jsdelivr.net/npm/topojson-client@3.1.0/+esm"
+  }
+}
 </script>
 </head>
 <body>
-<!-- shade-by-votes.js draws the map and fills the numbers in the text from data/results-2026.json. Each step, as it scrolls into
-     view, sets how far the map has faded from the usual colors (percentages) to vote-lead color (votes). The slider and the
-     Fade button do the same by hand. -->
-<div class="why rel">
-  <a class="back" href="texas.html">← Texas results</a>
-  <header>
-    <div class="kicker">Vote-lead color · 2026 U.S. Senate</div>
-    <h1>Shade by votes, not by percentages</h1>
-    <p class="lead">The usual election map shades each county by its percentage: the bigger the win, the darker the color. That makes a county where a hundred people voted look just as decisive as a big city. <b>Vote-lead color</b> shades each county by how many votes its lead was worth instead, so places that cast few votes fade out.</p>
+<div class="page">
+  <header class="topbar">
+    <div class="brand"><b>Uma correção simples em 2D</b> · Pintar pelo saldo de votos</div>
+    <nav class="links">
+      <a href="story.html" id="linkStory">Tour pelos municípios</a>
+      <a href="misread.html" id="linkMisread">Como lemos os mapas errado</a>
+      <a href="estado.html" id="linkExplore">Explorar todos os cargos →</a>
+    </nav>
   </header>
 
-  <div class="rel-body">
-    <figure class="rel-map" id="figure">
-      <div class="rel-mode" aria-live="polite"><span id="modeName">Percentage color</span></div>
-      <svg id="map" role="img" aria-label="Map of Texas counties colored by the 2026 U.S. Senate results"></svg>
-      <div class="rel-tip" id="tip" hidden></div>
-      <div class="rel-legends">
-        <div class="rel-legend" id="legPct"></div>
-        <div class="rel-legend" id="legRel"></div>
+  <div class="body">
+    <div class="rail">
+      <div class="kicker">Sem precisar de 3D</div>
+      <h1>E se pintarmos cada município pelo <em>saldo de votos</em> em vez da porcentagem?</h1>
+      <p class="lede">Mapas em 3D revelam onde os eleitores estão, mas nem sempre cabem em uma página impressa ou tela estática. Existe um ajuste simples que corrige o mapa plano sem levantar uma única coluna.</p>
+
+      <div class="mode-switch" role="tablist">
+        <button class="mode on" data-mode="winner">1 · Vencedor leva a cor</button>
+        <button class="mode" data-mode="margin">2 · Pintar pela margem %</button>
+        <button class="mode" data-mode="lead">3 · Pintar pelo saldo de votos ✓</button>
       </div>
-      <div class="rel-controls">
-        <span>Percentage</span>
-        <input type="range" id="mix" min="0" max="1000" value="0" aria-label="Fade from percentage color to vote-lead color" />
-        <span>Vote lead</span>
-        <button id="fade">Fade ▶</button>
+
+      <div class="explain" id="explain"></div>
+
+      <div class="examples">
+        <h2>Veja dois municípios na mesma disputa</h2>
+        <div class="pair" id="pairCards"></div>
       </div>
-    </figure>
 
-    <div class="rel-steps">
-      <section class="rel-step" data-mix="0">
-        <span class="n">1</span>
-        <h2>The usual map</h2>
-        <p id="s1">Each county is colored for whoever won it, and shaded by the winner's share: light for a close race, dark for a landslide.</p>
-      </section>
+      <div class="lift-box">
+        <div>
+          <b>Quer comprovar que o mapa por saldo de votos bate com a realidade?</b>
+          <span>Incline o mapa em 3D e veja que apenas os municípios com cores vivas realmente se erguem.</span>
+        </div>
+        <button id="liftBtn">Inclinar para 3D</button>
+      </div>
 
-      <section class="rel-step" data-mix="0" data-focus="tiny,big">
-        <span class="n">2</span>
-        <h2>Where it fails: a tiny landslide looks bigger than a city</h2>
-        <p id="s2">A small county that votes one way almost unanimously gets the darkest shade, darker than a big city that won by a huge number of votes.</p>
-      </section>
+      <p class="foot-cta"><a href="estado.html" id="ctaExplore">Abrir o explorador interativo completo →</a></p>
+    </div>
 
-      <section class="rel-step" data-mix="0" data-focus="dark">
-        <span class="n">3</span>
-        <h2>Where it fails: dark ink, few votes</h2>
-        <p id="s3">The darkest counties are mostly the emptiest. They cover a lot of the map but cast few of its votes.</p>
-      </section>
-
-      <section class="rel-step" data-mix="0" data-focus="close">
-        <span class="n">4</span>
-        <h2>Where it fails: a big, close county looks like nothing</h2>
-        <p id="s4">A close race gets the lightest shade, even when the county is so big that a narrow win is worth tens of thousands of votes.</p>
-      </section>
-
-      <section class="rel-step" data-mix="1">
-        <span class="n">5</span>
-        <h2>Vote-lead color</h2>
-        <p id="s5">Now each county is shaded by its lead in votes: the winner's votes minus the runner-up's. The more votes a county added to its winner's statewide total, the darker it is.</p>
-        <p class="rel-how">The shading is on a square-root scale, the way a circle's area is scaled on a bubble map, so a county with a quarter of the biggest lead is half as dark. Without it, every county but a handful would be white.</p>
-      </section>
-
-      <section class="rel-step" data-mix="1" data-focus="tiny,big">
-        <span class="n">6</span>
-        <h2>Now the city outweighs the tiny landslide</h2>
-        <p id="s6">The small county fades out, and the city is among the darkest on the map.</p>
-      </section>
-
-      <section class="rel-step" data-mix="1" data-focus="dark">
-        <span class="n">7</span>
-        <h2>The empty counties fade</h2>
-        <p id="s7">The counties that were the darkest red now barely show, because together they added few votes.</p>
-      </section>
-
-      <section class="rel-step" data-mix="1" data-focus="none">
-        <span class="n">8</span>
-        <h2>What vote-lead color hides</h2>
-        <p id="s8">No color scale shows everything. This one leaves out how a county split.</p>
-        <ul class="rel-list">
-          <li>A pale county may still have voted 9 to 1. It just didn't have many voters. Slide back to see its percentage.</li>
-          <li id="s8b">A big county can be dark with a modest win, because its lead is measured in votes.</li>
-          <li>Size on the map still isn't people: a big pale county and a small dark one are drawn as big as their land.</li>
-        </ul>
-        <p>So read the two together. Percentage color says how a county split; vote-lead color says how much that split counted. Use the slider to go back and forth.</p>
-      </section>
+    <div class="stage-wrap">
+      <div class="caption-bar" id="captionBar"></div>
+      <div id="stage">
+        <div id="callouts"></div>
+      </div>
     </div>
   </div>
-
-  <section class="next">
-    <h2>See it for yourself</h2>
-    <div class="cards">
-      <a class="card" href="texas.html?race=u-s-senate"><b>Texas, 3D view →</b><span>Each county rises as tall as its vote count.</span></a>
-      <a class="card" href="voters.html"><b>Texas, dot view →</b><span>One dot per voter. Zoom from the whole state down to a neighborhood.</span></a>
-      <a class="card" href="misread.html"><b>Misreading the Map →</b><span>Why the flat map looks red, step by step, with the dots.</span></a>
-    </div>
-  </section>
-
-  <footer>
-    <p id="src">Results: Texas Secretary of State, election night returns, unofficial until the state canvass.</p>
-    <p>County boundaries: U.S. Census Bureau, via <a href="https://github.com/topojson/us-atlas" target="_blank" rel="noopener">us-atlas</a>. This page counts visits with <a href="https://www.goatcounter.com" target="_blank" rel="noopener">GoatCounter</a>, which uses no cookies and does not collect personal data.</p>
-    <p><a href="sources.html">Sources and credits for every state →</a></p>
-  </footer>
 </div>
+
 <script type="module" src="shade-by-votes.js"></script>
-<script id="gc" data-goatcounter="https://texaslooksred.goatcounter.com/count" async src="https://gc.zgo.at/count.js"></script>
 </body>
 </html>

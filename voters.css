@@ -1,98 +1,56 @@
-/* Dot view: a full-screen map to move around, with all its navigation in a bar across the top, and a tour with a caption card for each scene. */
-.voters { position: relative; height: 100vh; height: 100svh; overflow: hidden; }
-#stage { position: absolute; inset: 0; }
-#stage canvas { display: block; touch-action: none; cursor: grab; }
-#stage canvas.dragging { cursor: grabbing; }
-/* all the navigation: a bar across the top */
-.topnav { position: absolute; top: 0; left: 0; right: 0; z-index: 3; background: var(--panel); border-bottom: 1px solid var(--line); padding: 8px 16px 6px; font-size: 13px; }
-.nav-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
-.nav-group { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.nav-group label { display: flex; align-items: center; gap: 6px; color: var(--muted); min-width: 0; }
-.nav-label { color: var(--muted); white-space: nowrap; }
-.topnav select { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 999px; padding: 5px 10px; cursor: pointer; min-width: 0; max-width: 210px; }
-.topnav select:disabled { opacity: .5; cursor: default; }
-.topnav select option, .topnav select optgroup { background: var(--panel); color: var(--text); }
-.topnav select:focus-visible, .topnav summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.topnav button { font-size: 13px; padding: 5px 12px; }
-.back { color: var(--text); text-decoration: none; white-space: nowrap; }
-.back:hover { color: var(--accent); }
-.nav-flight { margin-left: auto; }
-.flight-link { font-weight: 600; color: var(--accent); border: 1px solid var(--accent); border-radius: 999px; padding: 4px 12px; text-decoration: none; white-space: nowrap; }
-.flight-link:hover, .flight-link:focus-visible { background: var(--accent); color: #111; }
-.nav-info { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 14px; margin-top: 6px; font-size: 12.5px; color: var(--muted); }
-#raceCount b, #placeInfo b { color: var(--text); }
-.how summary { cursor: pointer; color: var(--accent); }
-.how { position: relative; }
-.src-link { color: var(--accent); text-decoration: none; }
-.src-link:hover, .src-link:focus-visible { text-decoration: underline; }
-.how p { position: absolute; top: 100%; left: 0; z-index: 4; width: min(340px, 80vw); margin: 6px 0 0; padding: 10px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; color: var(--text); }
-.flight-badge { color: #111; background: var(--accent); border-radius: 999px; padding: 3px 11px; font-weight: 650; white-space: nowrap; }
-.voters.exploring .flight-badge, .voters:not(.exploring) #goHome, .voters:not(.exploring) .nav-group { display: none; }
-/* on the tour the bar is just its name, the ways back and the legend */
-.voters:not(.exploring) .site-nav select { display: none; }
-.voters:not(.exploring) .site-nav { width: auto; }
-.voters:not(.exploring) .topnav { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 4px 14px; }
-.voters:not(.exploring) .nav-info { margin-top: 0; }
-.voters:not(.exploring) .nav-info > :not(#legend) { display: none; }
-
-.caption { position: absolute; left: 24px; top: 50%; transform: translateY(-50%); width: 380px; max-width: calc(100% - 32px);
-  background: rgba(21,26,34,.9); border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px; backdrop-filter: blur(6px);
-  transition: opacity .5s; }
-.caption.fade { opacity: 0; }
-.caption .kicker { font-size: 12px; text-transform: uppercase; letter-spacing: .1em; color: var(--accent); font-weight: 650; margin-bottom: 6px; }
-.caption h1 { font-size: 30px; line-height: 1.1; letter-spacing: -0.02em; margin: 0 0 10px; }
-.caption h2 { text-transform: none; color: var(--text); font-weight: 700; font-size: 21px; line-height: 1.2; letter-spacing: -0.01em; margin: 0 0 8px; }
-.caption p { margin: 0 0 8px; font-size: 15px; }
-.caption p:last-child { margin-bottom: 0; }
-.caption .big { font-size: 38px; font-weight: 750; letter-spacing: -0.02em; line-height: 1.05; color: var(--accent); margin: 2px 0 6px; }
-.caption .big small { display: block; font-size: 13px; font-weight: 500; letter-spacing: 0; color: var(--muted); margin-top: 3px; }
-.caption .vs { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 10px 0; }
-.caption .vs div { border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; font-size: 12.5px; color: var(--muted); }
-.caption .vs b { display: block; font-size: 20px; color: var(--text); }
-.caption .links { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
-.caption .links a { font-size: 14px; color: var(--accent); }
-.caption .d { color: #8fa8ff; font-weight: 650; } .caption .r { color: #ff8b8b; font-weight: 650; } .caption .o { color: #c2cad6; font-weight: 650; }
-.caption .note { font-size: 12.5px; color: var(--muted); }
-
-.legend-dots { display: flex; gap: 12px; font-size: 12px; color: var(--muted); margin-left: auto; }
-.legend-dots i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; vertical-align: -1px; }
-.scalebar { position: absolute; right: 16px; bottom: 80px; font-size: 12px; color: var(--muted); text-align: right; transition: opacity .3s; }
-.scalebar i { display: block; height: 6px; border: 1.5px solid var(--muted); border-top: 0; margin: 0 0 3px auto; }
-
-.player { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); display: flex; align-items: center; gap: 8px;
-  background: rgba(21,26,34,.88); border: 1px solid var(--line); border-radius: 999px; padding: 7px 14px 7px 8px; backdrop-filter: blur(6px); }
-.player button { min-width: 80px; }
-.player button.ghost { min-width: 0; padding: 6px 13px; font-size: 18px; line-height: 1; }
-.track { width: 200px; height: 4px; background: var(--line); border-radius: 2px; overflow: hidden; }
-.track i { display: block; height: 100%; width: 0; background: var(--accent); }
-.player #explore { font-size: 14px; padding: 6px 12px; }
-
-/* exploring: the reader moves the map; on the tour, the caption and player appear */
-#labels { transition: opacity .4s; }
-.voters.exploring #labels { opacity: 0; }
-.voters.exploring #caption, .voters.exploring #player { display: none; }
-@media (max-width: 760px) {
-  .caption { left: 12px; right: 12px; top: auto; bottom: 74px; transform: none; width: auto; max-width: none; padding: 14px 16px; }
-  .caption h1 { font-size: 24px; }
-  .caption h2 { font-size: 18px; }
-  .caption p { font-size: 14px; }
-  .caption .big { font-size: 30px; }
-  .scalebar { top: calc(var(--bar, 0px) + 8px); bottom: auto; }
-  .topnav { padding: 6px 12px; font-size: 12.5px; }
-  .nav-row { gap: 6px; }
-  /* phones: way back and whole state, then a row each for the race, the place and the flight */
-  #goHome { margin-left: auto; }
-  .nav-group { width: 100%; }
-  .nav-group label.grow { flex: 1; }
-  .nav-group label.grow select { flex: 1; max-width: none; }
-  .nav-group > select { flex: 1; width: 0; max-width: none; padding: 5px 6px; }
-  .nav-group > .nav-label:first-child { display: none; }
-  .nav-flight { margin-left: 0; }
-  .nav-flight #tourPlay { flex: 1; }
-  .legend-dots { margin-left: 0; }
-  .voters:not(.exploring) .flight-badge { font-size: 11.5px; padding: 3px 8px; }
-  .track { width: 90px; }
+.dot-legend {
+  display: flex; flex-direction: column; gap: 6px;
+  font-size: 12.5px;
 }
+.dot-legend > div { display: flex; align-items: center; gap: 8px; }
+.dot {
+  width: 10px; height: 10px; border-radius: 50%; display: inline-block;
+}
+.sw-r { background: #6c7dff; box-shadow: 0 0 8px rgba(108, 125, 255, 0.7); }
+.sw-d { background: #ff3b3b; box-shadow: 0 0 8px rgba(255, 59, 59, 0.7); }
+.sw-o { background: #9aa6b8; }
 
-#labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
-#labels .label { transition: opacity .3s; }
+.tour-card {
+  background: #0e131d;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 13px 14px;
+  display: flex; flex-direction: column; gap: 9px;
+}
+.tour-top {
+  display: flex; justify-content: space-between; align-items: center;
+}
+.tour-step {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em;
+  color: var(--accent); font-weight: 700;
+}
+.tour-title { font-weight: 700; font-size: 14.5px; }
+.tour-body { font-size: 12.5px; color: #c7cfdf; line-height: 1.48; }
+.tour-nav {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-top: 2px;
+}
+.tour-dots { display: flex; gap: 5px; }
+.tdot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: #2b354b; cursor: pointer;
+}
+.tdot.on { background: var(--accent); }
+
+#labels {
+  position: absolute; inset: 0; pointer-events: none; z-index: 5; overflow: hidden;
+}
+.city-label {
+  position: absolute; transform: translate(-50%, -100%);
+  display: flex; align-items: center; gap: 5px;
+  background: rgba(11, 14, 20, 0.82);
+  border: 1px solid #2e3a54;
+  border-radius: 5px;
+  padding: 2px 7px;
+  font-size: 11.5px; font-weight: 600; color: #eef1f7;
+  white-space: nowrap;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.45);
+}
+.city-label .pin {
+  width: 6px; height: 6px; border-radius: 50%; background: var(--accent);
+}

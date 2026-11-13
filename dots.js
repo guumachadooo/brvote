@@ -1,256 +1,280 @@
-// One dot per voter, for the dot view (voters.js).
-// dots-worker.js places the dots; this module turns them into one THREE.Points drawn by a small shader.
-//
-// We only know how many people voted in each county, not where they live, so each county's voters are placed by precinct
-// and census block (loadPrecincts, precinctUnits), and kept off land where the 2020 Census counted no one (loadLand).
-// Each dot also knows its place in a raised column (uniforms.uP: 0 = flat map, 1 = raised). No page raises them today:
-// the dots stay flat, and only the county map (app.js) has 3D columns.
+// Renderizador WebGL de Pontos original do usavote (adaptado para PT vermelho / PL azul e até 2047 municípios)
 import * as THREE from 'three';
-import { STATE } from './state.js';
 
-export const DOT_C = { dem: '#6c7dff', rep: '#ff3b3b', other: '#9aa6b8' };
+const DOT_C = {
+  rep:   '#6c7dff',
+  dem:   '#ff3b3b',
+  other: '#9aa6b8',
+};
 
-// A county's area as a flat list of triangles (x0,y0,x1,y1,x2,y2 ...), in map units, from its THREE.Shapes.
-export function countyTris(shapes) {
-  const tris = [];
-  for (const s of shapes) {
-    const { shape, holes } = s.extractPoints(1);
-    const faces = THREE.ShapeUtils.triangulateShape(shape, holes); // drops repeated end points in place
-    const pts = [...shape, ...holes.flat()];
-    for (const [a, b, d] of faces) tris.push(pts[a].x, pts[a].y, pts[b].x, pts[b].y, pts[d].x, pts[d].y);
+const VERT = /* glsl */`
+  precision highp float;
+  attribute vec4 position;
+  uniform mat4 projectionMatrix;
+  uniform mat4 modelViewMatrix;
+  uniform sampler2D uCounty;
+  uniform float uCountyW;
+  uniform float uHasHeight;
+  uniform float uPointBase;
+  uniform float uPixelRatio;
+  varying float vParty;
+  varying float vDim;
+  void main() {
+    vec3 pos = vec3(position.x, 0.0, position.z) / 300.0;
+    float yNorm = position.y / 30000.0;
+    float wVal = floor(position.w + 0.5);
+    float party = floor(wVal / 2048.0);
+    float cix = wVal - party * 2048.0;
+    vec2 cinfo = texture2D(uCounty, vec2((cix + 0.5) / uCountyW, 0.5)).rg;
+    float colH = cinfo.r * 80.0;
+    vDim = cinfo.g;
+    pos.y = 0.22 + yNorm * colH * uHasHeight;
+    vParty = party;
+    vec4 mv = modelViewMatrix * vec4(pos, 1.0);
+    gl_Position = projectionMatrix * mv;
+    float s = uPointBase * uPixelRatio * (170.0 / max(40.0, -mv.z));
+    gl_PointSize = clamp(s, 1.25 * uPixelRatio, 6.0 * uPixelRatio);
   }
-  return new Float32Array(tris);
-}
+`;
 
-// Where each county's voters live and how each neighborhood votes, from data/precincts.json.gz (scripts/build_precincts.py):
-// every 2024 voting district (VTD) with its 2024 U.S. Senate votes and the census blocks inside it, each with its adults
-// and a circle the size of its land area. Returns Map(fips -> { vtds: [{ d, r, o, name (its code or codes), adults, pts: Float32Array (x, y,
-// radius in map units, adults per block) }], D, R, O (county totals, 2024), adults }), and hot: each county's most
-// crowded spot, [lon, lat, adults per square mile within half a mile].
-// The file is stored gzipped to keep the site small; it's unzipped here unless the server already did (as when it's sent
-// with Content-Encoding: gzip).
-export async function fetchJsonGz(url) {
-  const res = await fetch(url); if (!res.ok) throw new Error(res.status);
-  const buf = new Uint8Array(await res.arrayBuffer());
-  const zipped = buf[0] === 0x1f && buf[1] === 0x8b;
-  const text = zipped ? await new Response(new Blob([buf]).stream().pipeThrough(new DecompressionStream('gzip'))).text()
-    : new TextDecoder().decode(buf);
-  return JSON.parse(text);
-}
-export async function loadPrecincts(P, url = 'data/precincts.json.gz', landUrl = 'data/landmask.bin.gz') {
-  const data = await fetchJsonGz(url);
-  // map units per meter, from 0.1 degree of latitude (about 11.1 km) in the middle of the state
-  const [lon, lat] = STATE.radiusScaleAt ?? [-99.5, 31];
-  const upm = P([lon, lat]).distanceTo(P([lon, lat + 0.1])) / 11113;
-  const out = new Map();
-  for (const [fips, vtds] of Object.entries(data.counties)) {
-    let D = 0, R = 0, O = 0;
-    const list = vtds.map(([d, r, o, flat, name]) => {
-      D += d; R += r; O += o;
-      const pts = new Float32Array(flat.length);
-      let x = 0, y = 0, adults = 0;
-      for (let i = 0; i < flat.length; i += 4) {
-        x += flat[i]; y += flat[i + 1];
-        const p = P([x / 1e4, y / 1e4]);
-        pts[i] = p.x; pts[i + 1] = p.y; pts[i + 2] = flat[i + 2] * 10 * upm; pts[i + 3] = flat[i + 3];
-        adults += flat[i + 3];
-      }
-      return { d, r, o, adults, pts, name };
-    });
-    out.set(fips, { vtds: list, D, R, O, adults: list.reduce((s, v) => s + v.adults, 0) });
+const FRAG = /* glsl */`
+  precision mediump float;
+  uniform vec3 uColorR;
+  uniform vec3 uColorD;
+  uniform vec3 uColorO;
+  uniform float uAlpha;
+  varying float vParty;
+  varying float vDim;
+  void main() {
+    vec2 p = gl_PointCoord - vec2(0.5);
+    float r2 = dot(p, p);
+    if (r2 > 0.25) discard;
+    float edge = smoothstep(0.25, 0.08, r2);
+    vec3 col = vParty < 0.5 ? uColorR : (vParty < 1.5 ? uColorD : uColorO);
+    col *= mix(1.0, 0.22, vDim);
+    float a = uAlpha * edge * mix(1.0, 0.28, vDim);
+    gl_FragColor = vec4(col, a);
   }
-  return { byFips: out, hot: data.hot, meta: data.meta, land: landUrl ? await loadLand(P, landUrl) : null };
-}
+`;
 
-// Where the 2020 Census counted anyone, from data/landmask.bin.gz (scripts/build_landmask.py), so that dots stay off lakes,
-// bays, airports and the like: { bits (one per cell, row by row), w, h, sx, ox, sy, oy }, where a map point (x, y) is in
-// grid cell (ox + x * sx, oy + y * sy). Dots are placed without it (null) if it doesn't load.
-async function loadLand(P, url) {
-  try {
-    const res = await fetch(url); if (!res.ok) throw new Error(res.status);
-    const gz = new Uint8Array(await res.arrayBuffer());
-    const zipped = gz[0] === 0x1f && gz[1] === 0x8b;
-    const b = zipped ? new Uint8Array(await new Response(new Blob([gz]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer()) : gz;
-    const n = new DataView(b.buffer, b.byteOffset).getUint32(0, true);
-    const { w, h, a, b: e } = JSON.parse(new TextDecoder().decode(b.subarray(4, 4 + n)));
-    const bits = new Uint8Array(Math.ceil(w * h / 8));
-    let p = 4 + n, cell = 0;
-    for (let y = 0; y < h; y++) { // each row: run lengths in cells, empty first, then lived on, taking turns
-      const end = (y + 1) * w;
-      for (let on = false; cell < end; on = !on) {
-        let run = 0, shift = 0, c;
-        do { c = b[p++]; run += (c & 127) * 2 ** shift; shift += 7; } while (c > 127);
-        if (on) for (let i = cell; i < cell + run; i++) bits[i >> 3] |= 1 << (i & 7);
-        cell += run;
-      }
-    }
-    const pa = P([a[0], a[1]]), pe = P([e[0], e[1]]);
-    const sx = (e[2] - a[2]) / (pe.x - pa.x), sy = (e[3] - a[3]) / (pe.y - pa.y);
-    return { bits, w, h, sx, ox: a[2] - pa.x * sx, sy, oy: a[3] - pa.y * sy };
-  } catch (err) { console.error('The land grid did not load; dots may land on empty land', err); return null; }
-}
+export function createDotLayer({ counties, group, getHeight, getPixelRatio }) {
+  const nC = counties.length;
+  const texW = Math.max(2048, nC);
+  const countyData = new Uint8Array(texW * 4);
+  for (let i = 0; i < nC; i++) countyData[i * 4] = 4;
+  const countyTex = new THREE.DataTexture(countyData, texW, 1, THREE.RGBAFormat, THREE.UnsignedByteType);
+  countyTex.minFilter = THREE.NearestFilter;
+  countyTex.magFilter = THREE.NearestFilter;
+  countyTex.needsUpdate = true;
 
-// The places for one county's dots (dots-worker.js `units`): each census block with the votes it is expected to hold.
-// Each party's county total (dem, rep, other: the race being shown) is shared among the VTDs in proportion to that party's
-// 2024 Senate votes there, then among each VTD's blocks by adults. A party with no 2024 votes in the county is shared by
-// all 2024 votes instead.
-export function precinctUnits(county, votes) {
-  const { vtds } = county, n = vtds.reduce((s, v) => s + v.pts.length / 4, 0);
-  const units = new Float32Array(n * 6), est = precinctVotes(county, votes);
-  let j = 0;
-  vtds.forEach((v, k) => {
-    const { d, r, o } = est[k];
-    for (let i = 0; i < v.pts.length; i += 4) {
-      const s = v.adults > 0 ? v.pts[i + 3] / v.adults : 0;
-      units.set([v.pts[i], v.pts[i + 1], v.pts[i + 2], d * s, r * s, o * s], j); j += 6;
-    }
-  });
-  return units;
-}
-
-// Each precinct's expected votes in a race known only by county: { d, r, o }, adding up to the county's result.
-export function precinctVotes({ vtds, D, R, O }, { dem, rep, other }) {
-  const T = D + R + O;
-  // this VTD's share of a party's county votes: its share of that party's 2024 votes (or of all 2024 votes)
-  const share = (v, own, countyOwn) => countyOwn > 0 ? own / countyOwn : (v.d + v.r + v.o) / T;
-  return vtds.map(v => ({ d: dem * share(v, v.d, D), r: rep * share(v, v.r, R), o: other * share(v, v.o, O) }));
-}
-
-const glslColor = h => { const c = new THREE.Color(h); return `vec3(${c.r.toFixed(4)}, ${c.g.toFixed(4)}, ${c.b.toFixed(4)})`; };
-
-// uniforms (all sizes in device pixels):
-//   uP       rise progress, same timing as the main map's columns (0 = flat)
-//   uReveal  share of dots shown (0..1), in a fixed random order, to let the dots appear gradually
-//   uMinSize smallest dot size; uFocus, uFocusSize: index of one county (in the order given to place()) whose dots get
-//            a different smallest size, -1 for none; uWorld: dot diameter in map units, so dots grow as the camera comes close
-//   uViewH   drawing buffer height, to turn uWorld into pixels
-export function createDots({ depthTest = true } = {}) {
   const uniforms = {
-    uP: { value: 0 }, uReveal: { value: 1 }, uMinSize: { value: 1 }, uWorld: { value: 0.012 }, uViewH: { value: 800 },
-    uCounties: { value: null }, uFocus: { value: -1 }, uFocusSize: { value: 1 },
+    uCounty:     { value: countyTex },
+    uCountyW:    { value: texW },
+    uHasHeight:  { value: 0 },
+    uPointBase:  { value: 2.3 },
+    uPixelRatio: { value: getPixelRatio() },
+    uColorR:     { value: new THREE.Color(DOT_C.rep) },
+    uColorD:     { value: new THREE.Color(DOT_C.dem) },
+    uColorO:     { value: new THREE.Color(DOT_C.other) },
+    uAlpha:      { value: 0.82 },
   };
-  const material = new THREE.RawShaderMaterial({
-    glslVersion: THREE.GLSL3, uniforms, depthTest, depthWrite: depthTest,
-    vertexShader: `precision highp float; precision highp int; precision highp sampler2D;
-      uniform mat4 modelViewMatrix, projectionMatrix;
-      uniform float uP, uReveal, uMinSize, uWorld, uViewH, uFocus, uFocusSize;
-      uniform sampler2D uCounties; // per county: center x, center y, map units per step, rise delay
-      in ivec4 position;           // from dots-worker.js: x, y steps from the county center, height * 64, party * 256 + county
-      out vec3 vColor; out float vSize;
-      float ease(float t) { return t < .5 ? 4. * t * t * t : 1. - pow(-2. * t + 2., 3.) / 2.; }
-      void main() {
-        uint h = uint(gl_VertexID) * 2654435761u; h ^= h >> 16; h *= 2246822519u; h ^= h >> 13;
-        if (float(h & 16777215u) / 16777216. >= uReveal) { gl_Position = vec4(2., 2., 2., 1.); gl_PointSize = 1.; return; }
-        float party = float(position.w >> 8);
-        int cix = position.w & 255;
-        float ci = float(cix);
-        vec4 C = texelFetch(uCounties, ivec2(cix, 0), 0);
-        vec3 q = vec3(position.xyz);
-        float k = ease(clamp((uP - 0.3 - C.w) / 0.45, 0., 1.));
-        vec4 mv = modelViewMatrix * vec4(C.x + q.x * C.z, C.y + q.y * C.z, 0.2 + q.z / 64. * k, 1.);
-        gl_Position = projectionMatrix * mv;
-        vSize = max(abs(ci - uFocus) < .5 ? uFocusSize : uMinSize, uWorld * projectionMatrix[1][1] * uViewH * 0.5 / max(-mv.z, 1e-3));
-        gl_PointSize = vSize;
-        vColor = party < .5 ? ${glslColor(DOT_C.dem)} : party < 1.5 ? ${glslColor(DOT_C.rep)} : ${glslColor(DOT_C.other)};
-      }`,
-    fragmentShader: `precision highp float;
-      in vec3 vColor; in float vSize; out vec4 outColor;
-      void main() {
-        vec2 d = gl_PointCoord - .5;
-        if (vSize > 2.5 && dot(d, d) > .25) discard; // round dots once they are big enough to see a shape
-        outColor = vec4(vColor, 1.);
-      }`,
+
+  const mat = new THREE.RawShaderMaterial({
+    vertexShader: VERT,
+    fragmentShader: FRAG,
+    uniforms,
+    transparent: true,
+    depthWrite: false,
   });
-  // The dots are all in one buffer, sorted into layers and each layer into tiles row by row. Each stretch of them to draw gets its own
-  // THREE.Points, sharing that buffer: the tiles on screen in one row sit next to each other in it, so there's at most one stretch a
-  // row in each layer drawn.
-  const group = new THREE.Group(), stretches = [];
-  // a fixed sphere: otherwise three.js would read all the dots to work one out, and the buffer is gone once it's on the graphics card
-  const WHOLE_MAP = new THREE.Sphere(new THREE.Vector3(), 1e5);
-  let attr = null, tiles = null;
-  const stretch = i => {
-    if (!stretches[i]) {
-      const g = new THREE.BufferGeometry();
-      g.setAttribute('position', attr); g.boundingSphere = WHOLE_MAP;
-      const s = new THREE.Points(g, material);
-      s.frustumCulled = false; s.visible = false;
-      stretches[i] = s; group.add(s);
+
+  const geo = new THREE.BufferGeometry();
+  const points = new THREE.Points(geo, mat);
+  points.visible = false;
+  points.frustumCulled = false;
+  points.renderOrder = 2;
+  group.add(points);
+
+  const outlineGroup = new THREE.Group();
+  outlineGroup.visible = false;
+  outlineGroup.position.y = 0.18;
+  const lineMat = new THREE.LineBasicMaterial({ color: 0x263149, transparent: true, opacity: 0.75 });
+  for (const c of counties) {
+    for (const rings of c.polys) {
+      for (const r of rings) {
+        const pts = r.map(([x, y]) => new THREE.Vector3(x, 0, -y));
+        const g = new THREE.BufferGeometry().setFromPoints(pts);
+        outlineGroup.add(new THREE.Line(g, lineMat));
+      }
     }
-    return stretches[i];
-  };
-  function clear() {
-    for (const s of stretches) { s.geometry.dispose(); group.remove(s); } // (disposing them also frees the shared buffer)
-    stretches.length = 0; attr = tiles = null;
   }
+  group.add(outlineGroup);
+
   const worker = new Worker(new URL('./dots-worker.js', import.meta.url));
-  let job = 0, done = null;
-  worker.onmessage = ({ data: { buf, table, counts, job: j, tiles: t } }) => {
-    if (j !== job) return; // a newer request came in while this one was being placed
-    clear();
-    // read as integers (ivec4): Direct3D, behind WebGL on Windows, can't turn 16-bit integers into floats itself, and
-    // converting ten million dots on the CPU every frame is far too slow
-    attr = new THREE.Int16BufferAttribute(buf, 4);
-    attr.gpuType = THREE.IntType;
-    attr.onUpload(function () { this.array = null; }); // the graphics card has them now; no need for a second copy here
-    tiles = t;
-    uniforms.uCounties.value?.dispose();
-    const tex = new THREE.DataTexture(table, table.length / 4, 1, THREE.RGBAFormat, THREE.FloatType);
-    tex.needsUpdate = true;
-    uniforms.uCounties.value = tex;
-    done({ n: counts[0] + counts[1] + counts[2], counts });
-  };
-  // Before drawing: choose the tiles this camera can see, assuming the dots lie flat on the ground (map group rotated -90 degrees
-  // about x, so map y is world -z). Looks a little past the screen's edges, since a dot's middle can be off screen and part of it on.
-  // Then choose how many layers: a level is used only if its cells are at most half a pixel across at the nearest ground on screen, so
-  // close up every dot is drawn. So is every dot while some are enlarged or still appearing, since then more of them can be seen.
-  const corner = new THREE.Vector3(), forward = new THREE.Vector3(), MARGIN = 1.1;
-  function showVisible(camera) {
-    if (!tiles) return;
-    const { n, x0: gx, y0: gy, size, sides, starts } = tiles;
-    camera.updateMatrixWorld();
-    forward.setFromMatrixColumn(camera.matrixWorld, 2).negate();
-    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity, all = false, nearest = Infinity;
-    for (const [sx, sy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
-      corner.set(sx * MARGIN, sy * MARGIN, 0.5).applyMatrix4(camera.projectionMatrixInverse).applyMatrix4(camera.matrixWorld);
-      const o = camera.position, dy = corner.y - o.y;
-      if (dy >= 0) { all = true; break; } // this ray never reaches the ground
-      const k = -o.y / dy, x = o.x + (corner.x - o.x) * k, y = -(o.z + (corner.z - o.z) * k);
-      nearest = Math.min(nearest, (corner.x - o.x) * k * forward.x + (corner.y - o.y) * k * forward.y + (corner.z - o.z) * k * forward.z);
-      x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y);
-    }
-    const tile = v => Math.floor(v / size);
-    const c0 = all ? 0 : Math.max(0, tile(x0 - gx)), c1 = all ? n - 1 : Math.min(n - 1, tile(x1 - gx));
-    const r0 = all ? 0 : Math.max(0, tile(y0 - gy)), r1 = all ? n - 1 : Math.min(n - 1, tile(y1 - gy));
-    let layers = sides.length + 1; // all of them
-    if (!all && uniforms.uFocus.value < 0 && uniforms.uReveal.value >= 1) {
-      const pixel = nearest * 2 / (camera.projectionMatrix.elements[5] * uniforms.uViewH.value); // map units across one pixel there
-      const fits = sides.findIndex(s => size / s <= pixel / 2);
-      if (fits >= 0) layers = fits + 1;
-    }
-    let used = 0, first = 0, end = -1;
-    const flush = () => {
-      if (end > first) { const s = stretch(used++); s.geometry.setDrawRange(first, end - first); s.visible = true; }
-    };
-    const w = n * n + 1;
-    if (c0 <= c1) for (let l = 0; l < layers; l++) for (let r = r0; r <= r1; r++) {
-      const a = starts[l * w + r * n + c0], b = starts[l * w + r * n + c1 + 1];
-      if (a === b) continue;
-      if (a === end) { end = b; continue; } // right after the last stretch, as when all of each row is on screen
-      flush(); first = a; end = b;
-    }
-    flush();
-    for (let i = used; i < stretches.length; i++) stretches[i].visible = false;
+  let workerReady = false;
+  let pendingMsg = null;
+  let reqId = 0;
+  let onDone = null;
+  let lastGenArgs = null;
+  let precinctCache = null;
+  let precinctPromise = null;
+  let activePrRace = null;
+  let prFileUrl = null;
+  let prShapesUrl = null;
+
+  function loadPrecinctsOnce() {
+    if (precinctPromise) return precinctPromise;
+    if (!prFileUrl || !prShapesUrl) return Promise.resolve(null);
+    const nameToCi = new Map(counties.map((c, i) => [c.name.toUpperCase(), i]));
+    precinctPromise = Promise.all([
+      fetch(prFileUrl).then(r => r.ok ? r.json() : null),
+      fetch(prShapesUrl).then(r => r.ok ? r.json() : null),
+    ]).then(([pr, shapes]) => {
+      if (!pr || !shapes) return null;
+      const byCounty = new Map();
+      for (const [cname, list] of Object.entries(pr.counties)) {
+        const ci = nameToCi.get(cname.toUpperCase());
+        const sList = shapes[cname];
+        if (ci == null || !sList) continue;
+        byCounty.set(ci, { list, sList });
+      }
+      precinctCache = { races: pr.races, byCounty };
+      return precinctCache;
+    }).catch(() => null);
+    return precinctPromise;
   }
-  // land: from loadPrecincts, once, before place(): where dots placed by `units` may land
-  const setLand = land => { if (land) worker.postMessage({ land }, [land.bits.buffer]); };
-  // counties: [{ tris, w (optional triangle weights) or units (places, from precinctUnits), dem, rep, other, target (raised
-  // height, map units), delay (rise delay, 0..0.25) }]
-  function place(counties, { per = 1, seed = 1 } = {}) {
-    return new Promise(resolve => {
-      done = resolve;
-      worker.postMessage({ per, seed, job: ++job,
-        counties: counties.map(({ tris, w, units, dem, rep, other, target = 0, delay = 0 }) => ({ tris, w, units, dem, rep, other, target, delay })) });
+
+  function applyPrecinctRace(raceKey) {
+    if (!precinctCache || precinctCache.races[raceKey] == null) {
+      if (activePrRace !== null) {
+        worker.postMessage({ type: 'clearPrecincts' });
+        activePrRace = null;
+      }
+      return false;
+    }
+    const idx = precinctCache.races[raceKey];
+    const prs = counties.map((_, ci) => {
+      const entry = precinctCache.byCounty.get(ci);
+      if (!entry) return null;
+      const out = [];
+      const { list, sList } = entry;
+      for (let i = 0; i < list.length; i++) {
+        const polys = sList[i];
+        if (!polys || !polys.length) continue;
+        const v = list[i][3][idx];
+        const r = v ? v[0] : 0, d = v ? v[1] : 0, o = v ? v[2] : 0;
+        out.push([r, d, o, polys]);
+      }
+      return out.length ? out : null;
     });
+    worker.postMessage({ type: 'setPrecincts', prs });
+    activePrRace = raceKey;
+    return true;
   }
-  return { group, uniforms, place, setLand, showVisible, clear };
+
+  worker.onmessage = (e) => {
+    const m = e.data;
+    if (m.type === 'ready') {
+      workerReady = true;
+      if (pendingMsg) {
+        const fn = pendingMsg;
+        pendingMsg = null;
+        fn();
+      }
+    } else if (m.type === 'dots') {
+      if (m.reqId !== reqId) return;
+      let total = 0;
+      for (const b of m.buffers) total += b.length;
+      const merged = new Int16Array(total);
+      const starts = new Int32Array(nC);
+      const counts = new Int32Array(nC);
+      let off = 0;
+      for (let ci = 0; ci < nC; ci++) {
+        const b = m.buffers[ci];
+        starts[ci] = off >> 2;
+        counts[ci] = b.length >> 2;
+        merged.set(b, off);
+        off += b.length;
+      }
+      for (let i = 0, n = merged.length >> 2; i < n; i++) {
+        const j = (Math.random() * (i + 1)) | 0;
+        const a = i * 4, b = j * 4;
+        const ciA = merged[a + 3] & 2047, ciB = merged[b + 3] & 2047;
+        if (ciA === ciB) continue;
+        for (let k = 0; k < 4; k++) { const t = merged[a + k]; merged[a + k] = merged[b + k]; merged[b + k] = t; }
+      }
+      const attr = new THREE.Int16BufferAttribute(merged, 4, false);
+      geo.setAttribute('position', attr);
+      syncHeights();
+      if (onDone) onDone({ totalDots: total >> 2, counts });
+    }
+  };
+
+  worker.postMessage({
+    type: 'init',
+    counties: counties.map(c => ({ polys: c.polys })),
+  });
+
+  function syncHeights() {
+    for (let i = 0; i < nC; i++) {
+      countyData[i * 4] = Math.max(1, Math.min(255, Math.round((getHeight(counties[i]) / 80.0) * 255)));
+    }
+    countyTex.needsUpdate = true;
+  }
+
+  function setHover(ci) {
+    for (let i = 0; i < nC; i++) {
+      countyData[i * 4 + 1] = (ci != null && i !== ci) ? 255 : 0;
+    }
+    countyTex.needsUpdate = true;
+  }
+
+  function configurePrecincts(fileUrl, shapesUrl) {
+    prFileUrl = fileUrl;
+    prShapesUrl = shapesUrl;
+  }
+
+  function generate({ votesByCounty, scale, seedSalt, raceKey }, cb) {
+    onDone = cb;
+    lastGenArgs = { votesByCounty, scale, seedSalt, raceKey };
+    const dispatchToWorker = () => {
+      if (raceKey && precinctCache) applyPrecinctRace(raceKey);
+      else if (activePrRace !== null) { worker.postMessage({ type: 'clearPrecincts' }); activePrRace = null; }
+      worker.postMessage({ type: 'generate', reqId: ++reqId, votes: votesByCounty, scale, seedSalt });
+    };
+    const send = () => {
+      if (workerReady) dispatchToWorker();
+      else pendingMsg = dispatchToWorker;
+    };
+    if (raceKey && !precinctCache && prFileUrl) {
+      loadPrecinctsOnce().then(send);
+    } else {
+      send();
+    }
+  }
+  function regenerate() {
+    if (lastGenArgs) generate(lastGenArgs, onDone);
+  }
+
+  function setVisible(v) {
+    points.visible = v;
+    outlineGroup.visible = v;
+  }
+  function setRaise(v) {
+    uniforms.uHasHeight.value = v;
+  }
+  function setScaleAppearance(scale) {
+    if (scale <= 10)      { uniforms.uPointBase.value = 1.45; uniforms.uAlpha.value = 0.62; }
+    else if (scale <= 25) { uniforms.uPointBase.value = 1.75; uniforms.uAlpha.value = 0.72; }
+    else if (scale <= 100){ uniforms.uPointBase.value = 2.25; uniforms.uAlpha.value = 0.82; }
+    else if (scale <= 250){ uniforms.uPointBase.value = 2.65; uniforms.uAlpha.value = 0.86; }
+    else                  { uniforms.uPointBase.value = 3.1;  uniforms.uAlpha.value = 0.90; }
+  }
+  function onResize() {
+    uniforms.uPixelRatio.value = getPixelRatio();
+  }
+
+  return {
+    generate, setVisible, setRaise, setScaleAppearance,
+    syncHeights, setHover, onResize, configurePrecincts,
+  };
 }
