@@ -44,7 +44,9 @@ test('computeCalloutPlacements keeps two close pins horizontally centered (dx = 
   assert.equal(res[1].dx, 0);
 });
 
-test('Brazil full-country 3D dataset (data/br) has all 27 UFs and national races', () => {
+import { createCartogramWarper } from './cartogram.js';
+
+test('Brazil full-country 3D dataset (data/br) has all 27 UFs, unified Brasília (DF), and national races', () => {
   const geo = JSON.parse(fs.readFileSync('./data/br/municipios.json', 'utf8'));
   const r2026 = JSON.parse(fs.readFileSync('./data/br/results-2026.json', 'utf8'));
   const rHist = JSON.parse(fs.readFileSync('./data/br/results-history.json', 'utf8'));
@@ -52,8 +54,31 @@ test('Brazil full-country 3D dataset (data/br) has all 27 UFs and national races
   const precincts = JSON.parse(fs.readFileSync('./data/br/precincts.json', 'utf8'));
 
   assert.equal(geo.features.length, 27);
-  assert.equal(cities.length, 27);
+  assert.ok(cities.length >= 27);
+  assert.ok(cities.some(c => c.name.includes('Brasília')), 'Brasília (DF) must be in data/br/cities.json');
   assert.ok(Object.keys(r2026.races['2026-pres-2t'].counties).length === 27);
   assert.ok(Object.keys(rHist.races['2022-presidente'].counties).length === 27);
   assert.equal(Object.keys(precincts.counties).length, 27);
+
+  // Verify Distrito Federal is 1 unified municipality (Brasília) with > 1.8M votes
+  const dfMuns = precincts.counties['DISTRITO FEDERAL'];
+  assert.equal(dfMuns.length, 1, 'Distrito Federal in br/precincts.json must be 1 unified Brasília entry');
+  assert.ok(dfMuns[0][1] > 1800000, `Expected Brasília total votes > 1.8M, got ${dfMuns[0][1]}`);
 });
+
+test('createCartogramWarper expands high-vote density regions and preserves identity at mix=0', () => {
+  const mockCounties = [
+    { cx: -20, cy: 0, area: 100, cur: { tot: 1000000 } },
+    { cx: 20, cy: 0, area: 100, cur: { tot: 10000 } },
+  ];
+  const warper = createCartogramWarper(mockCounties);
+  warper.prepareTargets();
+
+  assert.equal(warper.getMix(), 0);
+
+  // Point just to the right of the heavy (-20, 0) center should have positive dx displacement (+X)
+  const [dx, dy] = warper.evalDisplacement(-15, 0);
+  assert.ok(dx > 0, `Expected high-weight center at -20 to push x=-15 outward (dx > 0), got ${dx}`);
+  assert.ok(Math.abs(dy) < 1e-6);
+});
+

@@ -600,46 +600,140 @@ button:disabled {
   padding: 4px 11px; font-size: 12px; font-weight: 600;
 }
 
-/* Temas visuais personalizáveis */
+/* Temas visuais personalizáveis (100% da página sincronizada) */
+html.theme-contrast,
 body.theme-contrast {
-  --bg: #04060a;
-  --panel: #090d14;
-  --line: #2e3b52;
-  --rep: #4c6ef5;
-  --dem: #fa5252;
+  --bg: #020408;
+  --panel: #060a10;
+  --panel-elev: #0b111c;
+  --ink: #ffffff;
+  --text: #ffffff;
+  --muted: #b0c4de;
+  --line: #2d4059;
+  --rep: #38bdf8;
+  --dem: #f87171;
+  --accent: #34d399;
 }
+body.theme-contrast aside {
+  background: #05080e;
+}
+body.theme-contrast .races {
+  background: #060a10;
+}
+
+html.theme-light,
 body.theme-light {
-  --bg: #f1f4f9;
+  --bg: #f6f3ec;
   --panel: #ffffff;
+  --panel-elev: #efeae0;
   --ink: #141923;
   --text: #141923;
-  --muted: #556278;
-  --line: #d5dce6;
-  --accent: #d99b16;
+  --muted: #526071;
+  --line: #d6cfc2;
+  --rep: #0552b5;
+  --dem: #b81d1d;
+  --accent: #047857;
+  --accent-bright: #059669;
+}
+body.theme-light aside {
+  background: linear-gradient(180deg, #faf8f3 0%, #f1ece1 100%);
+  border-right-color: var(--line);
+  color: var(--ink);
+}
+body.theme-light .races,
+body.theme-light header.Hud {
+  background: rgba(250, 248, 243, 0.96);
+  border-bottom-color: var(--line);
+  color: var(--ink);
+}
+body.theme-light .site-nav {
+  border-bottom-color: var(--line);
+}
+body.theme-light .site-nav .home-link {
+  background: rgba(4, 120, 87, 0.1);
+  border-color: rgba(4, 120, 87, 0.35);
+  color: #065f46;
+}
+body.theme-light .ui-mode-switch,
+body.theme-light .unit-switch {
+  background: #eae4d7;
+  border-color: #cfc7b6;
 }
 body.theme-light .headline,
 body.theme-light .quick-guide,
+body.theme-light .mun-card,
 body.theme-light .mun-stat {
-  background: #f7f9fc;
+  background: #ffffff;
   color: #141923;
+  border-color: #d6cfc2;
+  box-shadow: 0 6px 18px rgba(20, 25, 35, 0.06);
 }
 body.theme-light .headline b,
-body.theme-light .mun-head h3 { color: #0b0e14; }
+body.theme-light .mun-head h3,
+body.theme-light h1,
+body.theme-light h2 {
+  color: #0f172a;
+}
+body.theme-light .rep-t { color: #0552b5; }
+body.theme-light .dem-t { color: #b81d1d; }
+body.theme-light .cmp-table td {
+  border-bottom-color: #e2dcd0;
+  color: #1e293b;
+}
+body.theme-light .cmp-table tr:hover td {
+  background: #ede7da;
+}
+body.theme-light .cmp-table tr.current td {
+  background: rgba(4, 120, 87, 0.12);
+  color: #065f46;
+}
+body.theme-light .view-link {
+  background: #eae4d7;
+  color: #334155;
+  border-color: #cfc7b6;
+}
+body.theme-light .view-link.active {
+  background: var(--accent);
+  color: #ffffff;
+  border-color: var(--accent);
+}
+body.theme-light .flight-link {
+  background: linear-gradient(135deg, rgba(4, 120, 87, 0.09), rgba(2, 132, 199, 0.07));
+  color: #065f46;
+  border-color: rgba(4, 120, 87, 0.35);
+}
 body.theme-light button,
 body.theme-light select,
-body.theme-light #munQuickSearch {
-  background: #f1f4f9;
+body.theme-light #munQuickSearch,
+body.theme-light .csel-btn {
+  background: #ffffff;
   color: #141923;
-  border-color: #c5cfde;
+  border-color: #c8c0b0;
 }
-body.theme-light button.active {
-  background: #f2c14e;
-  color: #111;
-  border-color: #d99b16;
+body.theme-light button.active,
+body.theme-light .mode-btn.active {
+  background: #047857;
+  color: #ffffff;
+  border-color: #047857;
 }
 body.theme-light .pill {
-  background: rgba(255, 255, 255, 0.92);
-  border-color: #c5cfde;
+  background: rgba(255, 255, 255, 0.94);
+  border-color: #c8c0b0;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.1);
+}
+body.theme-light .mobile-scroll-bar {
+  background: #efeae0;
+  border-color: #d6cfc2;
+}
+body.theme-light #tooltip,
+body.theme-light #detailPanel {
+  background: rgba(255, 255, 255, 0.97);
+  color: #0f172a;
+  border-color: #cbd5e1;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.16);
+}
+body.theme-light #tooltip .t-name {
+  color: #0f172a;
 }
 
 .info-row {
@@ -765,9 +859,277 @@ body:not(.panel-hidden) .panel-toggle { display: none; }
 }
 
 /* ============================================================================
-   OTIMIZAÇÃO PARA SMARTPHONE E TELAS ESTREITAS (idêntica ao usavote original):
-   O gráfico/mapa 3D (main) fica NO TOPO da página (order: -1) com 48svh,
-   seguido de uma barra de salto rápida e do painel explicativo (aside) logo abaixo!
+   CUSTOM IN-SITE SELECT DROPDOWN (.csel-wrap) — Replaces native OS <select>
+   ============================================================================ */
+.csel-native-hidden {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  border: 0 !important;
+  pointer-events: none !important;
+  opacity: 0 !important;
+}
+.csel-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+.pick.grow .csel-wrap,
+.go-row .csel-wrap {
+  flex: 1 1 auto;
+  width: 100%;
+}
+.csel-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 7px;
+  width: 100%;
+  background: rgba(16, 39, 51, 0.92);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 5px 11px;
+  font-size: 12.5px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  transition: border-color 0.18s ease, background 0.18s ease;
+}
+.csel-btn:hover,
+.csel-wrap.is-open .csel-btn {
+  border-color: var(--accent);
+}
+.csel-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.csel-caret {
+  display: inline-flex;
+  align-items: center;
+  color: var(--muted);
+  flex-shrink: 0;
+  transition: transform 0.2s ease;
+}
+.csel-wrap.is-open .csel-caret {
+  transform: rotate(180deg);
+  color: var(--accent);
+}
+.csel-menu {
+  position: absolute;
+  top: calc(100% + 5px);
+  left: 0;
+  min-width: max(100%, 190px);
+  max-width: min(340px, 90vw);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.48);
+  padding: 6px;
+  z-index: 4000;
+  backdrop-filter: blur(14px);
+}
+.csel-menu.csel-drop-up {
+  top: auto;
+  bottom: calc(100% + 5px);
+}
+.csel-search {
+  width: 100%;
+  padding: 6px 9px;
+  margin-bottom: 5px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 12px;
+  font-family: inherit;
+}
+.csel-search:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.csel-list {
+  max-height: 225px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.csel-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.csel-item:hover {
+  background: rgba(16, 185, 129, 0.14);
+}
+.csel-item.is-selected {
+  background: var(--accent);
+  color: #081218;
+  font-weight: 700;
+}
+body.theme-light .csel-item.is-selected {
+  color: #ffffff;
+}
+
+/* ============================================================================
+   VOLUME.HTML HUD & DETAIL PANEL STYLES
+   ============================================================================ */
+header.Hud {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 18px;
+  padding: 10px 18px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  z-index: 20;
+}
+header.Hud .site-nav {
+  width: 100%;
+}
+header.Hud .title-block h1 {
+  font-size: 18px;
+  margin: 0;
+}
+header.Hud .title-block .sub {
+  font-size: 12px;
+}
+header.Hud .controls {
+  position: static;
+  transform: none;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+header.Hud .seg {
+  display: inline-flex;
+  background: rgba(9, 20, 28, 0.65);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px;
+  gap: 2px;
+}
+header.Hud .seg button {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  padding: 5px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+header.Hud .seg button.active {
+  background: var(--accent);
+  color: #08131a;
+}
+header.Hud .legend {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-size: 12px;
+}
+header.Hud .legend-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+header.Hud .swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+header.Hud .swatch.r { background: #38bdf8; }
+header.Hud .swatch.d { background: #f87171; }
+header.Hud .totals .r { color: #38bdf8; font-weight: 700; }
+header.Hud .totals .d { color: #f87171; font-weight: 700; }
+.cam-Stack {
+  position: absolute;
+  right: 16px;
+  bottom: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  z-index: 15;
+}
+.cam-Stack button {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: rgba(11, 29, 38, 0.88);
+  color: var(--ink);
+  font-weight: 700;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+}
+#detailPanel {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  width: min(310px, calc(100vw - 32px));
+  background: rgba(11, 29, 38, 0.94);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 14px 16px;
+  z-index: 25;
+  backdrop-filter: blur(12px);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.42);
+}
+#detailPanel #dpClose {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+#detailPanel .dp-row { margin-top: 8px; }
+#detailPanel .dp-row-head {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  margin-bottom: 3px;
+}
+#detailPanel .dp-bar {
+  height: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  overflow: hidden;
+}
+#detailPanel .dp-bar-fill.r { height: 100%; background: #38bdf8; }
+#detailPanel .dp-bar-fill.d { height: 100%; background: #f87171; }
+#detailPanel .dp-bar-fill.o { height: 100%; background: #94a3b8; }
+
+/* ============================================================================
+   OTIMIZAÇÃO PARA SMARTPHONE E TELAS ESTREITAS
    ============================================================================ */
 @media (max-width: 860px) {
   html, body { height: auto; }
@@ -825,7 +1187,8 @@ body:not(.panel-hidden) .panel-toggle { display: none; }
   .races { padding: 7px 10px 6px; gap: 5px; }
   .site-nav { width: 100%; justify-content: space-between; padding-bottom: 5px; }
   .site-nav .why-top { display: none; }
-  .site-nav .state-Jump select { max-width: 185px; font-size: 12px; padding: 3px 7px; }
+  .site-nav .state-Jump select,
+  .site-nav .state-Jump .csel-btn { max-width: 175px; font-size: 11.5px; padding: 3px 8px; }
   .bar-groups { gap: 5px 6px; }
   #viewRow, #picker, #goRow {
     flex: none;
@@ -838,9 +1201,9 @@ body:not(.panel-hidden) .panel-toggle { display: none; }
   .unit-switch span { display: none; }
   .unit-switch button { padding: 4px 7px; font-size: 11px; }
   .compare-link { padding: 4px 8px; font-size: 11px; }
-  .pick span { display: none; }
+  .pick span { display: inline-block; font-size: 9.5px; }
   #raceSelect { min-width: 0; }
-  .go-row select { padding: 5px 7px; font-size: 12px; }
+  .go-row select, .go-row .csel-btn { padding: 5px 7px; font-size: 12px; }
   .info-row { font-size: 11.5px; min-height: 0; }
   #turnWrap { display: none !important; }
   .controls {
@@ -855,7 +1218,7 @@ body:not(.panel-hidden) .panel-toggle { display: none; }
     font-size: 11px;
   }
   .controls .pill label { display: none; }
-  .controls button, .controls select {
+  .controls button, .controls select, .controls .csel-btn {
     font-size: 11px;
     padding: 4px 8px;
   }
@@ -871,8 +1234,6 @@ body.ui-advanced .qg-foot {
 
 /* ============================================================================
    MODO EMBUTIDO EM COMPARE.HTML (body.framed)
-   Deve ficar após @media (max-width: 860px) pois cada iframe lado a lado tem ~640px.
-   Mantém apenas 1 linha enxuta no topo (Modo + Ano + Disputa) e >90% da tela para o mapa!
    ============================================================================ */
 html.framed-html,
 html:has(body.framed),
@@ -938,20 +1299,24 @@ body.framed #picker {
   min-width: 0 !important;
   display: flex !important;
   align-items: center !important;
-  gap: 5px !important;
+  gap: 6px !important;
 }
 body.framed .pick span {
-  display: none !important;
+  display: inline-block !important;
+  font-size: 9.5px !important;
+  color: var(--muted) !important;
 }
-body.framed #yearSelect {
-  padding: 4px 6px !important;
+body.framed #yearSelect,
+body.framed .csel-wrap[data-for="yearSelect"] .csel-btn {
+  padding: 4px 8px !important;
   font-size: 11.5px !important;
 }
-body.framed #raceSelect {
+body.framed #raceSelect,
+body.framed .csel-wrap[data-for="raceSelect"] .csel-btn {
   flex: 1 1 auto !important;
   min-width: 0 !important;
   width: 100% !important;
-  padding: 4px 7px !important;
+  padding: 4px 9px !important;
   font-size: 11.5px !important;
 }
 body.framed .mode-btn {
@@ -974,7 +1339,8 @@ body.framed .controls .pill {
   font-size: 11px !important;
 }
 body.framed .controls button,
-body.framed .controls select {
+body.framed .controls select,
+body.framed .controls .csel-btn {
   padding: 3px 7px !important;
   font-size: 11px !important;
 }

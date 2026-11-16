@@ -27,6 +27,7 @@
   <header class="topbar">
     <div class="brand" id="brand"><b>Como o Brasil Vota</b> · Um passeio de 60 segundos pelos municípios</div>
     <nav class="links">
+      <a href="estado.html" id="exitTourTop" class="exit-tour-link">✕ Sair do tour</a>
       <a href="misread.html" id="linkMisread">Como lemos os mapas errado →</a>
       <a href="estado.html" id="linkExplore">Explorar todos os cargos →</a>
     </nav>
@@ -37,7 +38,10 @@
       <div class="card" id="tourCard">
         <div class="card-head">
           <div class="step-tag" id="stepTag">Passo 1 de 6</div>
-          <button type="button" id="cardToggleBtn" class="card-min-btn" title="Minimizar ou expandir texto explicativo">Minimizar −</button>
+          <div class="card-head-actions">
+            <button type="button" id="cardToggleBtn" class="card-min-btn" title="Minimizar ou expandir texto explicativo">Minimizar −</button>
+            <a href="estado.html" id="exitTourBtn" class="card-exit-btn" title="Sair do tour guiado e voltar ao mapa completo">✕ Sair do tour</a>
+          </div>
         </div>
         <h1 id="headline"></h1>
         <div class="card-collapsible" id="cardCollapsible">

@@ -1,1006 +1,936 @@
-// volume.html: Municípios brasileiros em quatro etapas com animações fluidas estilo iOS/Apple:
-//   1. Plano                  cada município colorido pelo vencedor, independente do total de eleitores
-//   2. Altura = votos         cada município erguido pelo total de votos (como na página principal estado.html)
-//   3. Volume = votos         cada município erguido por votos por km², para que o VOLUME 3D (área × altura) seja proporcional aos votos
-//   4. Despejar (Jarros 3D)   o mapa começa 100% neutro/sem cor e os jarros 3D sobrevoam suavemente despejando e pintando os votos reais
-
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { geoMercator, geoArea } from 'd3-geo';
-import { STATES, STATE } from './state.js';
-import { REP_C, DEM_C } from './colors.js';
+import { geoMercator } from 'd3-geo';
+import { STATE } from './state.js';
+import { PL_BLUE, PT_RED, OTHER_HEX, marginColorHex } from './colors.js';
+import { createContextMap, clampCameraPan } from './context-map.js';
 
-const $ = id => document.getElementById(id);
-const fmt = n => Math.round(n).toLocaleString('pt-BR');
-const pct = (a, b) => b ? (100 * a / b).toFixed(1) + '%' : '–';
-const getJSON = url => fetch(url).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); });
+const REP_C = new THREE.Color(PL_BLUE);
+const DEM_C = new THREE.Color(PT_RED);
+const OTH_C = new THREE.Color(OTHER_HEX);
+const BG_C = new THREE.Color(0x080c14);
 
-const EARTH_KM = 6371.0;
-const H_MAX = 250, H_BASE = 1.4;
-const TILT = { phi: 0.94, theta: -0.20 };
-const BINS = [50, 55, 60, 65, 70, 75];
-const PARTY_HEX = { R: '#3b5bdb', D: '#e03131', O: '#64748b' };
-const NEUTRAL_BASE_HEX = '#142634';
+const mapArea = document.querySelector('.map-area');
+const tooltip = document.getElementById('tooltip');
+const yearSelect = document.getElementById('yearSelect');
+const raceSelect = document.getElementById('raceSelect');
+const modeToggle = document.getElementById('modeToggle');
+const totD = document.getElementById('totD');
+const totR = document.getElementById('totR');
+const legD = document.getElementById('legD');
+const legR = document.getElementById('legR');
 
-const UNIT_CAP = STATE.slug === 'br' ? 'Estado' : (STATE.slug === 'df' ? 'Região Administrativa' : 'Município');
-const unitsLow = STATE.slug === 'br' ? 'estados' : (STATE.slug === 'df' ? 'regiões administrativas' : 'municípios');
+const detailPanel = document.getElementById('detailPanel');
+const dpClose = document.getElementById('dpClose');
+const dpName = document.getElementById('dpName');
+const dpSub = document.getElementById('dpSub');
+const dpWinner = document.getElementById('dpWinner');
+const dpRows = document.getElementById('dpRows');
+const dpTotal = document.getElementById('dpTotal');
 
-// Popula seletor de estados com Brasil (Nacional) no topo
-const sortedStates = [...STATES].sort((a, b) => {
-  if (a.slug === 'br') return -1;
-  if (b.slug === 'br') return 1;
-  return a.name.localeCompare(b.name, 'pt-BR');
-});
-$('ufSelect').innerHTML = sortedStates.map(s => {
-  const lbl = s.slug === 'br' ? 'Brasil (Nacional)' : `${s.name} (${s.code})`;
-  return `<option value="${s.slug}" ${s.slug === STATE.slug ? 'selected' : ''}>${lbl}</option>`;
-}).join('');
-$('ufSelect').onchange = e => {
-  const q = new URLSearchParams(location.search);
-  q.set('uf', e.target.value);
-  location.search = q.toString();
-};
-$('pageTitle').textContent = `${STATE.name}: votos como volume 3D`;
-$('backStateLink').href = `estado.html?uf=${STATE.slug}`;
-document.title = `${STATE.name}: Votos como Volume 3D — Como o Brasil Vota`;
-
-let r2026, geoData;
-try {
-  [r2026, geoData] = await Promise.all([
-    getJSON(STATE.data.r2026),
-    getJSON(STATE.data.geo),
-  ]);
-} catch (e) {
-  $('loading').textContent = 'Não foi possível carregar os dados do estado. Recarregue a página.';
-  throw e;
+const titleH1 = document.querySelector('.title-block h1');
+if (titleH1 && STATE?.name) {
+  titleH1.textContent = `${STATE.name} — Volume Eleitoral 3D`;
 }
 
-const races = r2026.order
-  .map(id => ({ id, ...r2026.races[id] }))
-  .filter(r => !r.isShift);
-
-const features = geoData.features || [];
-const P = geoMercator().fitExtent([[-470, -470], [470, 470]], { type: 'FeatureCollection', features });
-
-// ---------- Cena 3D ----------
-const stage = $('stage');
-const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
-stage.append(renderer.domElement);
-
 const scene = new THREE.Scene();
-scene.background = new THREE.Color('#07131a');
-scene.add(new THREE.AmbientLight(0xffffff, 0.68));
-const sun = new THREE.DirectionalLight(0xffffff, 1.35);
-sun.position.set(-280, 620, 420);
-scene.add(sun);
+scene.background = BG_C.clone();
 
-const camera = new THREE.PerspectiveCamera(35, 1, 35, 8500);
+const camera = new THREE.PerspectiveCamera(36, 1, 1, 2000);
+const CAM_3D_POS = new THREE.Vector3(0, -195, 165);
+const CAM_2D_POS = new THREE.Vector3(0, -0.01, 275);
+camera.position.copy(CAM_3D_POS);
+camera.up.set(0, 0, 1);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+mapArea.appendChild(renderer.domElement);
+
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 controls.dampingFactor = 0.08;
-controls.screenSpacePanning = true;
-controls.maxPolarAngle = 1.35;
+controls.maxPolarAngle = Math.PI * 0.47;
+controls.minDistance = 40;
+controls.maxDistance = 600;
+controls.target.set(0, 0, 0);
+clampCameraPan(controls, camera, 145, false);
 
-const map = new THREE.Group();
-map.rotation.x = -Math.PI / 2;
-scene.add(map);
+const hemi = new THREE.HemisphereLight(0xdbeafe, 0x0b1120, 0.85);
+scene.add(hemi);
 
-const baseBorderMat = new THREE.LineBasicMaterial({ color: 0x2d4f66, transparent: true, opacity: 0.72 });
-const colEdgeMat = new THREE.LineBasicMaterial({ color: 0x102330, transparent: true, opacity: 0.36 });
+const dirLight = new THREE.DirectionalLight(0xffffff, 1.15);
+dirLight.position.set(85, -120, 210);
+dirLight.castShadow = true;
+dirLight.shadow.mapSize.set(2048, 2048);
+dirLight.shadow.camera.left = -150;
+dirLight.shadow.camera.right = 150;
+dirLight.shadow.camera.top = 150;
+dirLight.shadow.camera.bottom = -150;
+dirLight.shadow.camera.near = 20;
+dirLight.shadow.camera.far = 480;
+dirLight.shadow.bias = -0.0005;
+scene.add(dirLight);
 
-// Separa a geometria extrudada em dois grupos limpos:
-//   Grupo 0 (material[0]): apenas a tampa horizontal superior (normal.z > 0.5)
-//   Grupo 1 (material[1]): apenas as paredes laterais verticais (|normal.z| <= 0.5)
-// A tampa inferior (normal.z < -0.5) é descartada.
-// Além disso, em stack(c) apenas a camada MAIS ALTA visível tem seu material[0] (tampa superior) ativado!
-// Como só existe UMA tampa horizontal por município em toda a cena, é matematicamente impossível haver Z-fighting (piscar vermelho/azul)!
-function buildCleanColumnGeo(extGeo) {
-  const nonIdx = extGeo.index ? extGeo.toNonIndexed() : extGeo;
-  const pos = nonIdx.attributes.position.array;
-  const norm = nonIdx.attributes.normal.array;
-  const nTri = pos.length / 9;
+const rimLight = new THREE.DirectionalLight(0x93c5fd, 0.42);
+rimLight.position.set(-110, 95, 90);
+scene.add(rimLight);
 
-  const topPos = [], topNorm = [];
-  const sidePos = [], sideNorm = [];
-  for (let t = 0; t < nTri; t++) {
-    const base = t * 9;
-    const nz = norm[base + 2];
-    if (nz < -0.5) continue;
-    const targetP = nz > 0.5 ? topPos : sidePos;
-    const targetN = nz > 0.5 ? topNorm : sideNorm;
-    for (let k = 0; k < 9; k++) {
-      targetP.push(pos[base + k]);
-      targetN.push(norm[base + k]);
-    }
-  }
-  const finalPos = new Float32Array(topPos.length + sidePos.length);
-  finalPos.set(topPos, 0);
-  finalPos.set(sidePos, topPos.length);
-
-  const finalNorm = new Float32Array(topNorm.length + sideNorm.length);
-  finalNorm.set(topNorm, 0);
-  finalNorm.set(sideNorm, topNorm.length);
-
-  const out = new THREE.BufferGeometry();
-  out.setAttribute('position', new THREE.BufferAttribute(finalPos, 3));
-  out.setAttribute('normal', new THREE.BufferAttribute(finalNorm, 3));
-  out.clearGroups();
-  out.addGroup(0, topPos.length / 3, 0);
-  out.addGroup(topPos.length / 3, sidePos.length / 3, 1);
-  out.computeBoundingBox();
-  return out;
+function syncThemeColors() {
+  const isLight = document.documentElement.dataset.theme === 'editorial-light';
+  scene.background.set(isLight ? 0xf8fafc : 0x080c14);
 }
+window.addEventListener('brvote:themechange', syncThemeColors);
+syncThemeColors();
 
-// Extrai apenas o contorno superior (z = 1) para desenhar as divisas municipais com nitidez e sem linhas internas piscando
-function buildTopOutlineGeo(shapes) {
-  const linePts = [];
-  for (const sh of shapes) {
-    const rings = [sh.getPoints(), ...(sh.holes || []).map(h => h.getPoints())];
-    for (const r of rings) {
-      for (let i = 0; i < r.length; i++) {
-        const a = r[i], b = r[(i + 1) % r.length];
-        linePts.push(a.x, a.y, 1.002, b.x, b.y, 1.002);
-      }
-    }
-  }
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(linePts), 3));
-  return g;
-}
+const mapGroup = new THREE.Group();
+scene.add(mapGroup);
 
-const neutralColor = new THREE.Color(NEUTRAL_BASE_HEX);
+let counties = [];
+let racesByYear = {};
+let allRaces = {};
+let curRace = null;
+let selectedCounty = null;
+let hoveredCounty = null;
 
-const counties = features.map((f, idx) => {
-  const rawName = (f.properties && f.properties.name) || `Mun ${idx}`;
-  const polys = f.geometry.type === 'Polygon' ? [f.geometry.coordinates] : f.geometry.coordinates;
-  const shapes = [];
-  for (const poly of polys) {
-    const [outer, ...holes] = poly;
-    const ring = r => r.map(p => {
-      const pt = P(p);
-      return pt ? new THREE.Vector2(pt[0], -pt[1]) : null;
-    }).filter(Boolean);
-    const outerPts = ring(outer);
-    if (outerPts.length < 3) continue;
-    const s = new THREE.Shape(outerPts);
-    s.holes = holes.map(h => new THREE.Path(ring(h))).filter(p => p.getPoints().length >= 3);
-    shapes.push(s);
-  }
-  if (!shapes.length) return null;
+const urlParams = new URLSearchParams(window.location.search);
+const initStep = urlParams.get('step') || urlParams.get('mode');
+let mode = (initStep === 'fill' || initStep === 'pour') ? 'pour' : 'prism';
+let targetPrismMix = mode === 'flat' ? 0 : 1;
+let prismMix = targetPrismMix;
 
-  let rawExt = null;
-  try {
-    rawExt = new THREE.ExtrudeGeometry(shapes, { depth: 1, bevelEnabled: false });
-  } catch {
-    try {
-      for (const sh of shapes) sh.holes = [];
-      rawExt = new THREE.ExtrudeGeometry(shapes, { depth: 1, bevelEnabled: false });
-    } catch {
-      return null;
-    }
-  }
-  const g = buildCleanColumnGeo(rawExt);
-  const topOutlineGeo = buildTopOutlineGeo(shapes);
-  rawExt.dispose();
-
-  const ox = (g.boundingBox.min.x + g.boundingBox.max.x) / 2;
-  const oy = (g.boundingBox.min.y + g.boundingBox.max.y) / 2;
-
-  const realKm2 = Math.max(1.5, geoArea(f) * EARTH_KM * EARTH_KM);
-  const screenArea = Math.max(
-    4,
-    shapes.reduce((acc, s) => acc + Math.abs(THREE.ShapeUtils.area(s.getPoints())), 0)
-  );
-
-  // Bandeja neutra (mapa sem cor de partido) para quando o município ainda não recebeu tinta
-  const baseTopMat = new THREE.MeshBasicMaterial({ color: neutralColor.clone() });
-  const baseSideMat = new THREE.MeshLambertMaterial({ color: neutralColor.clone().multiplyScalar(0.8) });
-  const baseMesh = new THREE.Mesh(g, [baseTopMat, baseSideMat]);
-  baseMesh.scale.z = H_BASE;
-  const baseLine = new THREE.LineSegments(topOutlineGeo, baseBorderMat);
-  baseMesh.add(baseLine);
-  map.add(baseMesh);
-
-  const makeLayer = () => {
-    const topMat = new THREE.MeshBasicMaterial();
-    const sideMat = new THREE.MeshLambertMaterial();
-    const m = new THREE.Mesh(g, [topMat, sideMat]);
-    const outline = new THREE.LineSegments(topOutlineGeo, colEdgeMat);
-    m.add(outline);
-    m.outline = outline;
-    map.add(m);
-    return m;
-  };
-
-  const lose = makeLayer();
-  const oth  = makeLayer();
-  const mesh = makeLayer();
-
-  const c = {
-    i: idx,
-    name: rawName,
-    key: rawName.toUpperCase(),
-    km2: realKm2,
-    screenArea,
-    baseMesh,
-    mesh, lose, oth,
-    ox, oy,
-    box: g.boundingBox,
-    cur:  { D: 0, R: 0, O: 0 },
-    from: { D: 0, R: 0, O: 0 },
-    to:   { D: 0, R: 0, O: 0 },
-    paintProgress: 1, // 0 = neutro sem cor, 1 = totalmente pintado
-    fromPaint: 1,
-    toPaint: 1,
-    extra: 0,
-    rep: 0, dem: 0, other: 0, total: 0,
-  };
-  for (const m of [baseMesh, mesh, lose, oth]) m.userData = c;
-  return c;
-}).filter(Boolean);
-
-$('loading').remove();
-
-const tmpCol = new THREE.Color();
-const paintLayer = (m, hex, paintMix = 1) => {
-  tmpCol.set(NEUTRAL_BASE_HEX).lerp(new THREE.Color(hex), Math.max(0, Math.min(1, paintMix)));
-  m.material[0].color.copy(tmpCol);
-  m.material[1].color.copy(tmpCol).multiplyScalar(0.82);
-};
-
-// Ordena as partes da coluna da menor votação (base) para a maior votação (topo)
-function ranked(c) {
-  const rWin = (c.rep ?? 0) >= (c.dem ?? 0);
-  return [
-    { m: c.lose, party: rWin ? 'D' : 'R', v: rWin ? (c.dem ?? 0) : (c.rep ?? 0) },
-    { m: c.oth,  party: 'O',             v: c.other ?? 0 },
-    { m: c.mesh, party: rWin ? 'R' : 'D', v: rWin ? (c.rep ?? 0) : (c.dem ?? 0) },
-  ].sort((a, b) => a.v - b.v);
-}
-
-function colorOf(c) {
-  if (!c.total) return '#273a4b';
-  const share = 100 * Math.max(c.dem, c.rep) / c.total;
-  let k = 0;
-  for (let idx = BINS.length - 1; idx >= 0; idx--) {
-    if (share >= BINS[idx]) { k = idx; break; }
-  }
-  const palette = c.rep >= c.dem ? REP_C : DEM_C;
-  return palette[Math.min(k, palette.length - 1)];
-}
-
-function updateCountyMaterials(c, topColorBlend = 1) {
-  const rWin = (c.rep ?? 0) >= (c.dem ?? 0);
-  const winParty = rWin ? 'R' : 'D';
-  const loseParty = rWin ? 'D' : 'R';
-  const pm = c.paintProgress ?? 1;
-
-  paintLayer(c.lose, PARTY_HEX[loseParty], pm);
-  paintLayer(c.oth, PARTY_HEX.O, pm);
-
-  const winHex = new THREE.Color(PARTY_HEX[winParty]).lerp(new THREE.Color(colorOf(c)), topColorBlend);
-  tmpCol.set(NEUTRAL_BASE_HEX).lerp(winHex, Math.max(0, Math.min(1, pm)));
-  c.mesh.material[0].color.copy(tmpCol);
-  c.mesh.material[1].color.copy(tmpCol).multiplyScalar(0.82);
-}
-
-// Empilha as camadas ativas sem JAMAIS desenhar mais de uma tampa horizontal superior por município!
-// Isso elimina 100% qualquer possibilidade de Z-fighting entre vermelho e azul.
-function stack(c) {
-  const parts = ranked(c);
-  const active = [];
-  for (const p of parts) {
-    const len = Math.max(0, c.cur[p.party] || 0);
-    if (len > 0.04 && (c.paintProgress ?? 1) > 0.01) {
-      active.push({ ...p, len });
-    } else {
-      p.m.visible = false;
-    }
-  }
-
-  if (!active.length) {
-    // Município neutro (ainda sem tinta): exibe apenas a bandeja neutra
-    c.baseMesh.visible = true;
-    c.baseMesh.material[0].visible = true;
-    return null;
-  }
-
-  // Oculta a bandeja neutra pois as camadas coloridas já cobrem o município desde z = 0
-  c.baseMesh.visible = false;
-
-  let z = 0;
-  for (let i = 0; i < active.length; i++) {
-    const item = active[i];
-    const isTop = (i === active.length - 1);
-    const len = isTop ? Math.max(0.1, item.len + (c.extra || 0)) : item.len;
-    item.m.visible = true;
-    // Apenas a camada do TOPO desenha a tampa horizontal superior (material[0]) e o contorno superior!
-    // As camadas abaixo desenham exclusivamente as paredes laterais verticais (material[1]).
-    item.m.material[0].visible = isTop;
-    if (item.m.outline) item.m.outline.visible = isTop;
-    item.m.position.z = z;
-    item.m.scale.z = len;
-    z += len;
-  }
-  return active[active.length - 1].m;
-}
-
-// ---------- Disputa, cores e as quatro etapas ----------
-let race = null, step = 'flat', grow = null;
-
-// Em "volume", cada unidade é erguida fielmente por votos por km² para que o volume (área × altura) seja proporcional ao total de votos
-const densityOf = c => c.total / Math.max(18, c.km2);
-
-const heightOf = (c, s) => s === 'flat' || !c.total ? H_BASE
-  : Math.max(H_BASE * 1.25, H_MAX * (s === 'votes' ? c.total / race.maxTotal : densityOf(c) / race.maxDensity));
-
-function targetLayersForStep(c, s) {
-  if (!c.total || s === 'fill') {
-    // Em 'fill' (Despejar), o mapa esvazia para 100% neutro/sem cor! Os jarros vão pintar cada município do zero.
-    return { D: 0, R: 0, O: 0 };
-  }
-  const h = heightOf(c, s);
-  if (s === 'flat') {
-    const rWin = (c.rep ?? 0) >= (c.dem ?? 0);
-    return {
-      R: rWin ? h : 0,
-      D: rWin ? 0 : h,
-      O: 0,
-    };
-  }
-  const t = c.total || 1;
-  return {
-    R: h * (c.rep / t),
-    D: h * (c.dem / t),
-    O: h * (c.other / t),
-  };
-}
-
-function setRace(id) {
-  race = races.find(r => r.id === id) || races[0];
-  for (const c of counties) {
-    const row = race.counties[c.key] || race.counties[c.name] || [0, 0, 0];
-    const rep = row[0] || 0, dem = row[1] || 0, other = row[2] || 0;
-    const total = rep + dem + other;
-    Object.assign(c, { rep, dem, other, total });
-  }
-  race.maxTotal = Math.max(1, ...counties.map(c => c.total));
-  race.maxDensity = Math.max(1, ...counties.map(c => densityOf(c)));
-  for (const c of counties) {
-    c.paintProgress = 1;
-    updateCountyMaterials(c, 1);
-  }
-  $('race').value = race.id;
-  setStep(step, true);
-  syncUrl();
-}
-
-function syncUrl() {
-  const q = new URLSearchParams();
-  q.set('uf', STATE.slug);
-  if (race && race.id !== '2026-pres-2t') q.set('race', race.id);
-  if (step !== 'flat') q.set('step', step);
-  try { history.replaceState(null, '', `?${q.toString()}`); } catch {}
-}
-
-function setStep(s, keepCamera = false) {
-  const was = step;
-  step = s;
-  pour.stop(false);
-  for (const id of ['flat', 'votes', 'volume', 'fill']) {
-    $(id).setAttribute('aria-pressed', String(id === s));
-  }
-  const now = performance.now();
-  for (const c of counties) {
-    c.from = { ...c.cur };
-    c.to = targetLayersForStep(c, s);
-    c.fromPaint = c.paintProgress ?? 1;
-    c.toPaint = s === 'fill' ? 0 : 1;
-    c.extra = 0;
-  }
-  const dur = s === 'fill' ? 620 : 1100;
-  grow = { start: now, dur };
-  if (s === 'fill') {
-    // Aguarda 900ms com o mapa 100% neutro (sem cor) antes do 1º jarro iniciar o despejo
-    pour.start(now + 900);
-  }
-  if (!keepCamera && (was === 'flat') !== (s === 'flat')) {
-    turnCamera(s === 'flat' ? { phi: 0.0001, theta: 0 } : TILT);
-  }
-  controls.enableRotate = s !== 'flat';
-  writeNote();
-  syncUrl();
-}
-
-function writeNote() {
-  const tall = [...counties].sort((a, b) => heightOf(b, step === 'fill' ? 'volume' : step) - heightOf(a, step === 'fill' ? 'volume' : step))[0];
-  const tallVotes = [...counties].sort((a, b) => b.total - a.total)[0];
-  const total = counties.reduce((n, c) => n + c.total, 0);
-  const totR = race.totals?.R || 0, totD = race.totals?.D || 0;
-  const tag = race.tag ? ` (${race.tag})` : '';
-  const head = `<b>${race.office} 2026${tag}</b> · ${fmt(total)} votos válidos · <span style="color:#8da8ff">${race.rep} ${pct(totR, total)}</span> vs. <span style="color:#ff7b7b">${race.dem} ${pct(totD, total)}</span>. `;
-
-  $('note').innerHTML = head + (step === 'fill'
-    ? `<b>Despejar por volume (Jarros 3D).</b> O mapa começa 100% neutro (sem cor) e os jarros sobrevoam suavemente ${STATE.name}, pintando e enchendo cada ${UNIT_CAP.toLowerCase()} do zero até sua altura por densidade eleitoral. ${pour.running ? 'Clique em <b>Despejar</b> novamente para concluir instantaneamente.' : 'Clique em <b>Despejar</b> para repetir a animação.'}`
-    : step === 'flat'
-    ? `Cada um dos ${counties.length} ${unitsLow} é pintado por quem venceu ali, não importa quantas pessoas votaram. Clique nos botões abaixo para erguer primeiro por <b>Altura = votos</b>, depois por <b>Volume = votos</b> ou <b>Despejar (Jarros 3D)</b>.`
-    : step === 'votes'
-    ? `<b>Altura = votos.</b> Cada coluna tem a altura proporcional ao total de votos do ${UNIT_CAP.toLowerCase()} (maior pico: <b>${tallVotes.name}</b>, ${fmt(tallVotes.total)} votos). Porém, uma unidade territorialmente extensa ocupa muito mais área na tela do que uma unidade compacta com a mesma votação.`
-    : `<b>Volume = votos.</b> A altura de cada coluna passa a ser calculada por <b>votos por km²</b>, de modo que o <b>volume 3D</b> (área × altura) seja proporcional ao total de votos. Mais denso: <b>${tall.name}</b> (${fmt(tall.total / tall.km2)} votos/km²; ${tallVotes.name} distribui seus ${fmt(tallVotes.total)} votos por ${fmt(tallVotes.km2)} km²).`);
-}
-
-$('race').innerHTML = races.map(r => {
-  const tag = r.tag ? ` (${r.tag})` : '';
-  return `<option value="${r.id}">2026 · ${r.office}${tag} — ${r.rep} vs. ${r.dem}</option>`;
-}).join('');
-$('race').onchange = e => setRace(e.target.value);
-
-for (const id of ['flat', 'votes', 'volume']) {
-  $(id).onclick = () => { if (step !== id) setStep(id); };
-}
-$('fill').onclick = () => {
-  if (pour.running) {
-    pour.stop(true);
-    writeNote();
-  } else {
-    setStep('fill');
-  }
-};
-
-$('legend').innerHTML =
-  `<div>${REP_C.map(c => `<i style="background:${c}"></i>`).join('')}<span>PL venceu no ${UNIT_CAP.toLowerCase()}</span></div>` +
-  `<div>${DEM_C.map(c => `<i style="background:${c}"></i>`).join('')}<span>PT venceu no ${UNIT_CAP.toLowerCase()}</span></div>` +
-  `<div style="margin-top:4px"><i style="background:${PARTY_HEX.R};width:10px"></i><i style="background:${PARTY_HEX.D};width:10px"></i><span>2º colocado na base</span>` +
-  `<i style="background:${NEUTRAL_BASE_HEX};border:1px solid #2d4f66;width:10px;margin-left:8px"></i><span>Mapa neutro antes de pintar</span></div>`;
-
-// ---------- Câmera ----------
-let turn = null;
-function fitDistance() {
-  const w = Math.max(1, stage.clientWidth), h = Math.max(1, stage.clientHeight);
-  const t = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
-  return 575 / (t * Math.min(1, w / h));
-}
-function place(phi, theta, r = camera.position.distanceTo(controls.target)) {
-  const s = new THREE.Spherical(r, phi, theta);
-  camera.position.copy(controls.target).add(new THREE.Vector3().setFromSpherical(s));
-  camera.lookAt(controls.target);
-}
-function turnCamera(to) {
-  const s = new THREE.Spherical().setFromVector3(camera.position.clone().sub(controls.target));
-  turn = {
-    from: { phi: s.phi, theta: s.theta },
-    to,
-    r0: s.radius,
-    r1: to.phi > 0.1 ? fitDistance() * (stage.clientWidth < 600 ? 0.96 : 0.78) : fitDistance(),
+let camTween = null;
+function startCamTween(toPos, toTarget = new THREE.Vector3(0, 0, 0), dur = 0.65) {
+  camTween = {
+    fromPos: camera.position.clone(),
+    toPos: toPos.clone(),
     fromTarget: controls.target.clone(),
-    toTarget: new THREE.Vector3(0, to.phi > 0.1 ? 26 : 0, to.phi > 0.1 ? 0 : 32),
-    start: performance.now(),
+    toTarget: toTarget.clone(),
+    t: 0,
+    dur,
   };
 }
-function resize() {
-  const w = Math.max(1, stage.clientWidth), h = Math.max(1, stage.clientHeight);
-  renderer.setSize(w, h);
-  camera.aspect = w / h;
-  camera.updateProjectionMatrix();
-}
-new ResizeObserver(resize).observe(stage);
-resize();
-controls.target.set(0, 0, 32);
-place(0.0001, 0, fitDistance());
 
-// ---------- Tooltip ao passar o mouse ou tocar ----------
-const ray = new THREE.Raycaster(), mouse = new THREE.Vector2(), tip = $('tip');
-let hovered = null;
-function hover(e) {
-  const r = renderer.domElement.getBoundingClientRect();
-  mouse.set((e.clientX - r.left) / r.width * 2 - 1, -(e.clientY - r.top) / r.height * 2 + 1);
-  ray.setFromCamera(mouse, camera);
-  const hit = ray.intersectObjects(counties.flatMap(c => [c.mesh, c.lose, c.oth, c.baseMesh]), false)[0];
-  const c = hit?.object.userData;
-  if (hovered && hovered !== c) updateCountyMaterials(hovered, 1);
-  hovered = c || null;
-  if (!c) { tip.style.display = 'none'; return; }
-  c.mesh.material[0].color.lerp(new THREE.Color('#ffffff'), 0.25);
-  const row = (a, b, m = true) => `<div class="r${m ? ' m' : ''}"><span>${a}</span><span>${b}</span></div>`;
-  const dens = c.total / c.km2;
-  tip.innerHTML = `<div class="n">${c.name}</div>` + (!c.total ? row('Sem votos apurados', '') :
-    row(`<span style="color:#8da8ff">${race.rep}</span>`, `${fmt(c.rep)} · ${pct(c.rep, c.total)}`, false) +
-    row(`<span style="color:#ff7b7b">${race.dem}</span>`, `${fmt(c.dem)} · ${pct(c.dem, c.total)}`, false) +
-    (c.other ? row('Outros / 3ª Via', `${fmt(c.other)} · ${pct(c.other, c.total)}`) : '') +
-    row('Total de votos válidos', fmt(c.total)) +
-    row('Área territorial (IBGE)', `${fmt(c.km2)} km²`) +
-    row('Densidade eleitoral', `${dens < 10 ? dens.toFixed(1) : fmt(dens)} votos/km²`));
-  tip.style.display = 'block';
-  const x = e.clientX - r.left, y = e.clientY - r.top;
-  tip.style.left = Math.max(8, Math.min(x + 14, r.width - tip.offsetWidth - 8)) + 'px';
-  tip.style.top = Math.max(8, Math.min(y + 14, r.height - tip.offsetHeight - 8)) + 'px';
-}
-renderer.domElement.addEventListener('pointermove', hover);
-renderer.domElement.addEventListener('pointerdown', hover);
-renderer.domElement.addEventListener('pointerleave', () => {
-  tip.style.display = 'none';
-  if (hovered) updateCountyMaterials(hovered, 1);
-  hovered = null;
-});
+// ============================================================================
+// Modern Studio Glass & Brushed Metal Carafe Pitcher ("Balde / Jarro 3D")
+// ============================================================================
+function makePitcher(liquidColor) {
+  const root = new THREE.Group();
+  const tilt = new THREE.Group();
+  root.add(tilt);
 
-// ---------- Loop de animação (curva quintic suave estilo iOS) ----------
-const easeQuint = t => t < 0.5 ? 16 * t * t * t * t * t : 1 - Math.pow(-2 * t + 2, 5) / 2;
-const smoothstep = (a, b, x) => {
-  const u = Math.max(0, Math.min(1, (x - a) / Math.max(1e-6, b - a)));
-  return u * u * (3 - 2 * u);
+  // Sleek tapered laboratory/studio carafe profile
+  const profile = [
+    new THREE.Vector2(0.0, 0.0),
+    new THREE.Vector2(5.4, 0.0),
+    new THREE.Vector2(5.8, 1.2),
+    new THREE.Vector2(5.2, 8.5),
+    new THREE.Vector2(4.4, 13.5),
+    new THREE.Vector2(5.1, 16.2),
+    new THREE.Vector2(6.0, 17.5),
+  ];
+  const glassGeo = new THREE.LatheGeometry(profile, 36);
+  glassGeo.rotateX(Math.PI / 2); // Z-up
+
+  const glassMat = new THREE.MeshPhysicalMaterial({
+    color: 0xf8fafc,
+    transparent: true,
+    opacity: 0.34,
+    roughness: 0.08,
+    metalness: 0.05,
+    reflectivity: 0.92,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+  });
+  const glassMesh = new THREE.Mesh(glassGeo, glassMat);
+  tilt.add(glassMesh);
+
+  // Brushed metallic collar ring & base ring
+  const collarGeo = new THREE.TorusGeometry(4.65, 0.38, 16, 36);
+  const metalMat = new THREE.MeshStandardMaterial({
+    color: 0xe2e8f0,
+    metalness: 0.85,
+    roughness: 0.22,
+  });
+  const collar = new THREE.Mesh(collarGeo, metalMat);
+  collar.position.z = 13.5;
+  tilt.add(collar);
+
+  const baseRingGeo = new THREE.CylinderGeometry(5.55, 5.55, 0.9, 32);
+  baseRingGeo.rotateX(Math.PI / 2);
+  const baseRing = new THREE.Mesh(baseRingGeo, metalMat);
+  baseRing.position.z = 0.45;
+  tilt.add(baseRing);
+
+  // Inner glowing liquid volume
+  const liqProfile = [
+    new THREE.Vector2(0.0, 0.6),
+    new THREE.Vector2(5.0, 0.6),
+    new THREE.Vector2(4.8, 7.8),
+    new THREE.Vector2(4.1, 13.2),
+    new THREE.Vector2(0.0, 13.2),
+  ];
+  const liqGeo = new THREE.LatheGeometry(liqProfile, 32);
+  liqGeo.rotateX(Math.PI / 2);
+  const liqMat = new THREE.MeshStandardMaterial({
+    color: liquidColor,
+    emissive: liquidColor,
+    emissiveIntensity: 0.28,
+    roughness: 0.18,
+    metalness: 0.08,
+  });
+  const liqMesh = new THREE.Mesh(liqGeo, liqMat);
+  tilt.add(liqMesh);
+
+  // Ergonomic curved brushed-metal handle on -X side
+  const handleCurve = new THREE.CatmullRomCurve3([
+    new THREE.Vector3(-4.5, 0, 13.2),
+    new THREE.Vector3(-8.4, 0, 12.0),
+    new THREE.Vector3(-8.8, 0, 6.2),
+    new THREE.Vector3(-5.2, 0, 2.5),
+  ]);
+  const handleGeo = new THREE.TubeGeometry(handleCurve, 24, 0.52, 12, false);
+  const handleMesh = new THREE.Mesh(handleGeo, metalMat);
+  tilt.add(handleMesh);
+
+  // Precision pouring lip on +X side
+  const lipGeo = new THREE.CylinderGeometry(1.1, 2.0, 3.2, 20, 1, true, -Math.PI * 0.38, Math.PI * 0.76);
+  lipGeo.rotateZ(-Math.PI / 4);
+  const lipMesh = new THREE.Mesh(lipGeo, metalMat);
+  lipMesh.position.set(5.4, 0, 16.8);
+  tilt.add(lipMesh);
+
+  // Spout local marker (+X lip tip)
+  const spoutMarker = new THREE.Object3D();
+  spoutMarker.position.set(6.5, 0, 17.5);
+  tilt.add(spoutMarker);
+
+  // Dynamic liquid stream (tapered glowing tube + droplets)
+  const streamMat = new THREE.MeshStandardMaterial({
+    color: liquidColor,
+    emissive: liquidColor,
+    emissiveIntensity: 0.45,
+    roughness: 0.15,
+    transparent: true,
+    opacity: 0.92,
+  });
+  const streamGeo = new THREE.CylinderGeometry(0.42, 1.05, 1, 16);
+  streamGeo.translate(0, -0.5, 0);
+  streamGeo.rotateX(Math.PI / 2);
+  const streamMesh = new THREE.Mesh(streamGeo, streamMat);
+  streamMesh.visible = false;
+  scene.add(streamMesh);
+
+  // Splash ring at impact point
+  const splashGeo = new THREE.RingGeometry(0.5, 2.1, 24);
+  const splashMat = new THREE.MeshBasicMaterial({
+    color: liquidColor,
+    transparent: true,
+    opacity: 0.75,
+    side: THREE.DoubleSide,
+  });
+  const splashMesh = new THREE.Mesh(splashGeo, splashMat);
+  splashMesh.visible = false;
+  scene.add(splashMesh);
+
+  root.visible = false;
+  scene.add(root);
+
+  return {
+    root,
+    tilt,
+    liqMesh,
+    spoutMarker,
+    streamMesh,
+    splashMesh,
+    color: liquidColor,
+  };
+}
+
+const pitcherR = makePitcher(REP_C);
+const pitcherD = makePitcher(DEM_C);
+const pitcherO = makePitcher(OTH_C);
+
+// ============================================================================
+// Five-Stage Two-Pass Pitcher Pour Choreography
+// ============================================================================
+// Why 5 stages?
+// Pass 1 pours the 2nd-place base layers so they sit at the bottom.
+// Pass 2 pours the winning layers so they land ON TOP of the 2nd-place base!
+// Every drop poured ALWAYS lands on the very top of the column.
+const POUR_STAGES = [
+  { id: 'O',      pitcher: pitcherO, dur: 1.05, label: 'Outros / 3ª Via (Base)' },
+  { id: 'R_base', pitcher: pitcherR, dur: 2.30, label: 'PL / Direita — 1ª Passada (Base onde PT venceu)' },
+  { id: 'D_base', pitcher: pitcherD, dur: 2.30, label: 'PT / Esquerda — 1ª Passada (Base onde PL venceu)' },
+  { id: 'R_win',  pitcher: pitcherR, dur: 2.50, label: 'PL / Direita — 2ª Passada (Topo vencedor)' },
+  { id: 'D_win',  pitcher: pitcherD, dur: 2.50, label: 'PT / Esquerda — 2ª Passada (Topo vencedor)' },
+];
+
+const pour = {
+  active: false,
+  stageIdx: 0,
+  stageT: 0,
+  fillO: new Float32Array(0),
+  fillR: new Float32Array(0),
+  fillD: new Float32Array(0),
+  done: true,
 };
 
-function frame(now) {
-  if (grow) {
-    const t = Math.min(1, (now - grow.start) / grow.dur);
-    const k = easeQuint(t);
-    for (const c of counties) {
-      c.cur.D = c.from.D + (c.to.D - c.from.D) * k;
-      c.cur.R = c.from.R + (c.to.R - c.from.R) * k;
-      c.cur.O = c.from.O + (c.to.O - c.from.O) * k;
-      c.paintProgress = c.fromPaint + (c.toPaint - c.fromPaint) * k;
-      updateCountyMaterials(c, 1);
+function resetPourArrays(n, filled = true) {
+  pour.fillO = new Float32Array(n);
+  pour.fillR = new Float32Array(n);
+  pour.fillD = new Float32Array(n);
+  if (filled) {
+    pour.fillO.fill(1);
+    pour.fillR.fill(1);
+    pour.fillD.fill(1);
+    pour.active = false;
+    pour.done = true;
+  } else {
+    pour.active = true;
+    pour.done = false;
+    pour.stageIdx = 0;
+    pour.stageT = 0;
+  }
+}
+
+function hideAllPitchers() {
+  for (const p of [pitcherR, pitcherD, pitcherO]) {
+    p.root.visible = false;
+    p.streamMesh.visible = false;
+    p.splashMesh.visible = false;
+  }
+}
+
+function startPourAnimation() {
+  if (!counties.length) return;
+  resetPourArrays(counties.length, false);
+  hideAllPitchers();
+  // Immediately update stack to empty neutral slate so the map starts blank and paints progressively
+  for (const c of counties) {
+    stack(c);
+  }
+}
+
+// ============================================================================
+// Stack & Layer Positioning (Eliminates 2D Z-fighting & Flicker)
+// ============================================================================
+const NEUTRAL_EMPTY_C = new THREE.Color(0x1e293b);
+
+function stack(c) {
+  const idx = c.idx;
+  const fO = mode === 'pour' ? pour.fillO[idx] : 1;
+  const fR = mode === 'pour' ? pour.fillR[idx] : 1;
+  const fD = mode === 'pour' ? pour.fillD[idx] : 1;
+
+  // Interpolate smoothly between flat 2D height (0.36) and full 3D volume height
+  const flatH = 0.36;
+  const hO = THREE.MathUtils.lerp(flatH * (c.shO || 0), c.hO || 0, prismMix) * fO;
+  const hR = THREE.MathUtils.lerp(flatH * (c.shR || 0), c.hR || 0, prismMix) * fR;
+  const hD = THREE.MathUtils.lerp(flatH * (c.shD || 0), c.hD || 0, prismMix) * fD;
+
+  // Order of stacking from bottom to top:
+  // O is always at the bottom (0 .. hO).
+  // Then the 2nd-place party is in the middle.
+  // Then the winning party is at the very top!
+  const rWins = (c.rVotes || 0) >= (c.dVotes || 0);
+
+  let zO = 0, lenO = hO;
+  let zR = 0, lenR = hR;
+  let zD = 0, lenD = hD;
+
+  if (rWins) {
+    // D is 2nd place (middle), R is winner (top)
+    zD = lenO;
+    zR = lenO + lenD;
+  } else {
+    // R is 2nd place (middle), D is winner (top)
+    zR = lenO;
+    zD = lenO + lenR;
+  }
+
+  const totalPourFill = fO * (c.shO || 0) + fR * (c.shR || 0) + fD * (c.shD || 0);
+
+  // Base neutral plinth when pour hasn't filled this county yet
+  if (mode === 'pour') {
+    c.baseMesh.visible = true;
+    c.baseMesh.scale.z = 0.22;
+    c.baseMesh.position.z = 0;
+  } else {
+    c.baseMesh.visible = false;
+  }
+
+  // Strictly hide zero-height layers (len <= 1e-4) so coplanar caps NEVER z-fight in 2D or during pour!
+  if (lenO > 1e-4) {
+    c.meshO.visible = true;
+    c.meshO.position.z = zO;
+    c.meshO.scale.z = lenO;
+  } else {
+    c.meshO.visible = false;
+  }
+
+  if (lenR > 1e-4) {
+    c.meshR.visible = true;
+    c.meshR.position.z = zR;
+    c.meshR.scale.z = lenR;
+  } else {
+    c.meshR.visible = false;
+  }
+
+  if (lenD > 1e-4) {
+    c.meshD.visible = true;
+    c.meshD.position.z = zD;
+    c.meshD.scale.z = lenD;
+  } else {
+    c.meshD.visible = false;
+  }
+
+  const totalZ = lenO + lenR + lenD;
+  c.currentTopZ = Math.max(0.22, totalZ);
+
+  // In 2D mode (prismMix < 0.25), blend top cap toward smooth margin choropleth color so 2D looks crisp
+  const capColorR = prismMix < 0.25 ? c.marginColor.clone().lerp(REP_C, prismMix * 4) : REP_C;
+  const capColorD = prismMix < 0.25 ? c.marginColor.clone().lerp(DEM_C, prismMix * 4) : DEM_C;
+
+  c.matR[0].color.copy(capColorR);
+  c.matD[0].color.copy(capColorD);
+
+  // Keep border outline neatly sitting just above the current top surface
+  if (c.borderLine) {
+    c.borderLine.position.z = c.currentTopZ + 0.08;
+    const isSel = c === selectedCounty || c === hoveredCounty;
+    c.borderLine.material.opacity = isSel ? 0.95 : (totalPourFill > 0.02 || mode !== 'pour' ? 0.38 : 0.18);
+  }
+}
+
+// ============================================================================
+// Synchronized Swirling Pitcher Trajectory & Pouring Engine
+// ============================================================================
+function stepPour(dt) {
+  if (!pour.active || pour.done) return;
+
+  const stage = POUR_STAGES[pour.stageIdx];
+  if (!stage) {
+    pour.active = false;
+    pour.done = true;
+    hideAllPitchers();
+    return;
+  }
+
+  pour.stageT += dt / stage.dur;
+  const u = Math.min(1, pour.stageT);
+
+  // Identify active counties for this stage, sorted in a smooth spatial sweep (West-to-East + North-to-South)
+  const activeCounties = stage.counties || [];
+  hideAllPitchers();
+
+  if (activeCounties.length > 0) {
+    const p = stage.pitcher;
+    p.root.visible = true;
+
+    // Progress along the sorted spatial path of counties
+    const exactIdx = u * (activeCounties.length - 1);
+    const i0 = Math.floor(exactIdx);
+    const i1 = Math.min(activeCounties.length - 1, i0 + 1);
+    const frac = exactIdx - i0;
+
+    const c0 = activeCounties[i0];
+    const c1 = activeCounties[i1];
+
+    const cx = THREE.MathUtils.lerp(c0.cx, c1.cx, frac);
+    const cy = THREE.MathUtils.lerp(c0.cy, c1.cy, frac);
+    const topZ = THREE.MathUtils.lerp(c0.currentTopZ || 4, c1.currentTopZ || 4, frac);
+
+    // Expressive swirling orbit ("efeito legal de girar") around the target point while pouring
+    const swirlAngle = u * Math.PI * 10;
+    const swirlRadius = 3.2 * Math.sin(u * Math.PI);
+    const targetX = cx + Math.cos(swirlAngle) * swirlRadius;
+    const targetY = cy + Math.sin(swirlAngle) * swirlRadius;
+
+    // Position pitcher so its spout is directly above (targetX, targetY)
+    const hoverZ = Math.max(26, topZ + 22);
+    // Because spout is at +X in local space and tilted down, offset root in -X
+    p.root.position.set(targetX - 9.5, targetY, hoverZ);
+
+    // Smoothly tilt carafe forward to pour, and add subtle swirl roll
+    const pourTilt = Math.sin(Math.min(1, u * 5) * Math.PI * 0.5) * 0.92;
+    p.tilt.rotation.set(
+      Math.sin(swirlAngle) * 0.14,
+      pourTilt,
+      Math.cos(swirlAngle) * 0.10
+    );
+
+    p.root.updateMatrixWorld(true);
+    const spoutWorld = new THREE.Vector3();
+    p.spoutMarker.getWorldPosition(spoutWorld);
+
+    const streamLen = Math.max(1.0, spoutWorld.z - topZ);
+    p.streamMesh.visible = true;
+    p.streamMesh.position.copy(spoutWorld);
+    p.streamMesh.scale.set(1, 1, streamLen);
+
+    p.splashMesh.visible = true;
+    p.splashMesh.position.set(spoutWorld.x, spoutWorld.y, topZ + 0.15);
+    const pulse = 0.85 + 0.35 * Math.sin(u * 45);
+    p.splashMesh.scale.set(pulse, pulse, 1);
+
+    // Synchronize county fill 100% with the pitcher's progression along the sweep!
+    const windowWidth = Math.max(1.5, activeCounties.length * 0.14);
+    for (let k = 0; k < activeCounties.length; k++) {
+      const c = activeCounties[k];
+      const localProg = THREE.MathUtils.clamp((exactIdx - k + windowWidth) / windowWidth, 0, 1);
+      // Smoothstep easing for liquid rising
+      const smoothProg = localProg * localProg * (3 - 2 * localProg);
+      if (stage.id === 'O') {
+        pour.fillO[c.idx] = Math.max(pour.fillO[c.idx], smoothProg);
+      } else if (stage.id === 'R_base' || stage.id === 'R_win') {
+        pour.fillR[c.idx] = Math.max(pour.fillR[c.idx], smoothProg);
+      } else if (stage.id === 'D_base' || stage.id === 'D_win') {
+        pour.fillD[c.idx] = Math.max(pour.fillD[c.idx], smoothProg);
+      }
       stack(c);
     }
-    if (t === 1) grow = null;
   }
-  pour.update(now);
-  if (turn) {
-    const t = Math.min(1, (now - turn.start) / 1050);
-    const k = easeQuint(t);
-    controls.enabled = false;
-    controls.target.lerpVectors(turn.fromTarget, turn.toTarget, k);
-    place(
-      turn.from.phi + (turn.to.phi - turn.from.phi) * k,
-      turn.from.theta + (turn.to.theta - turn.from.theta) * k,
-      turn.r0 + (turn.r1 - turn.r0) * k
-    );
-    if (t === 1) { turn = null; controls.enabled = true; }
-  } else {
-    controls.update();
+
+  if (pour.stageT >= 1) {
+    // Ensure 100% fill for all counties in the finished stage
+    for (const c of activeCounties) {
+      if (stage.id === 'O') pour.fillO[c.idx] = 1;
+      else if (stage.id === 'R_base' || stage.id === 'R_win') pour.fillR[c.idx] = 1;
+      else if (stage.id === 'D_base' || stage.id === 'D_win') pour.fillD[c.idx] = 1;
+      stack(c);
+    }
+    pour.stageIdx++;
+    pour.stageT = 0;
+    if (pour.stageIdx >= POUR_STAGES.length) {
+      pour.active = false;
+      pour.done = true;
+      hideAllPitchers();
+    }
   }
-  renderer.render(scene, camera);
-  requestAnimationFrame(frame);
 }
 
-// ---------- Despejar (Fill): O mapa começa 100% sem cor e os jarros 3D pintam cada município suavemente ----------
-const pour = (() => {
-  const PARTY = ['D', 'O', 'R'];
-  const up = new THREE.Vector3(), tmp = new THREE.Vector3(), hit = new THREE.Vector3();
-  const world = (x, y, z) => map.localToWorld(tmp.set(x, y, z)).clone();
-  const SHELF = {
-    D: { x: -165, y: 380, z: 110 },
-    O: { x:    0, y: 380, z: 110 },
-    R: { x:  165, y: 380, z: 110 },
-  };
+function buildPourSchedule() {
+  // Spatial sweep key: West-to-East primary, North-to-South secondary
+  const sweepSort = (a, b) => (a.cx - b.cx) + (b.cy - a.cy) * 0.35;
 
-  const glass = new THREE.MeshStandardMaterial({
-    color: 0xe6f2ff, transparent: true, opacity: 0.34, roughness: 0.1, metalness: 0.1, side: THREE.DoubleSide, depthWrite: false
-  });
-  const rim = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.72 });
-  const lathe = pts => new THREE.LatheGeometry(pts.map(([x, y]) => new THREE.Vector2(x, y)), 36);
-  const TIP = new THREE.Vector3(14.2, 27.6, 0);
-  const flatQ = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -Math.PI / 2);
+  POUR_STAGES[0].counties = counties.filter(c => (c.hO || 0) > 0.01).sort(sweepSort);
+  // Pass 1 (R_base): counties where PT won (so R is 2nd-place base layer)
+  POUR_STAGES[1].counties = counties.filter(c => (c.rVotes || 0) < (c.dVotes || 0) && (c.hR || 0) > 0.01).sort(sweepSort);
+  // Pass 1 (D_base): counties where PL won (so D is 2nd-place base layer)
+  POUR_STAGES[2].counties = counties.filter(c => (c.rVotes || 0) >= (c.dVotes || 0) && (c.hD || 0) > 0.01).sort(sweepSort);
+  // Pass 2 (R_win): counties where PL won (so R lands ON TOP of D_base)
+  POUR_STAGES[3].counties = counties.filter(c => (c.rVotes || 0) >= (c.dVotes || 0) && (c.hR || 0) > 0.01).sort(sweepSort);
+  // Pass 2 (D_win): counties where PT won (so D lands ON TOP of R_base)
+  POUR_STAGES[4].counties = counties.filter(c => (c.rVotes || 0) < (c.dVotes || 0) && (c.hD || 0) > 0.01).sort(sweepSort);
+}
 
-  function makePitcher(party) {
-    const g = new THREE.Group();
-    g.scale.setScalar(2.75);
-    g.visible = false;
-    scene.add(g);
-    g.add(new THREE.Mesh(lathe([[0, 0], [8, 0], [9.5, 1.5], [10, 8], [9, 16], [9.8, 22], [10.6, 26]]), glass));
-    const lip = new THREE.Mesh(new THREE.TorusGeometry(10.6, 0.35, 6, 40), rim);
-    lip.rotation.x = Math.PI / 2;
-    lip.position.y = 26;
-    g.add(lip);
-    const spout = new THREE.Mesh(new THREE.CylinderGeometry(1.4, 3.4, 6, 14, 1, true), glass);
-    spout.position.set(11.2, 25.6, 0);
-    spout.rotation.z = -1.05;
-    g.add(spout);
-    const handle = new THREE.Mesh(new THREE.TorusGeometry(6.5, 1.2, 8, 24, Math.PI), glass);
-    handle.rotation.z = Math.PI / 2;
-    handle.position.set(-9.6, 14, 0);
-    g.add(handle);
-    const mat = new THREE.MeshStandardMaterial({ color: PARTY_HEX[party], transparent: true, opacity: 0.94, roughness: 0.25 });
-    const liquid = new THREE.Mesh(lathe([[0, 0], [7.6, 0], [9, 1.4], [9.5, 7.4], [8.8, 14.4]]), mat);
-    liquid.position.y = 0.6;
-    g.add(liquid);
-    const surface = new THREE.Mesh(new THREE.CircleGeometry(8.8, 36), mat);
-    g.add(surface);
-    const canvas = document.createElement('canvas');
-    canvas.width = 380;
-    canvas.height = 136;
-    const tex = new THREE.CanvasTexture(canvas);
-    tex.colorSpace = THREE.SRGBColorSpace;
-    const label = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true }));
-    label.scale.set(29, 10.5, 1);
-    label.position.set(0, 9.5, 0);
-    label.renderOrder = 10;
-    g.add(label);
-    return { party, g, liquid, surface, canvas, tex, text: '', tilt: 0, pos: new THREE.Vector3() };
+// ============================================================================
+// Geometry Construction & Race Application
+// ============================================================================
+function ringArea2D(ring) {
+  let a = 0;
+  for (let i = 0, n = ring.length; i < n; i++) {
+    const [x1, y1] = ring[i];
+    const [x2, y2] = ring[(i + 1) % n];
+    a += x1 * y2 - x2 * y1;
+  }
+  return a * 0.5;
+}
+
+function applyRace(raceKey) {
+  const race = allRaces[raceKey];
+  if (!race) return;
+  curRace = race;
+
+  legD.textContent = race.dem || 'PT / Esquerda';
+  legR.textContent = race.rep || 'PL / Direita';
+
+  const fmt = new Intl.NumberFormat('pt-BR');
+  totD.textContent = fmt.format(race.totals?.D || 0);
+  totR.textContent = fmt.format(race.totals?.R || 0);
+
+  // Compute maximum vote density (votes / area) so volume = area * height = total votes!
+  let maxDensity = 0;
+  for (const c of counties) {
+    const [rV, dV, oV] = race.counties?.[c.key] || [0, 0, 0];
+    const tot = rV + dV + oV;
+    const dens = tot / Math.max(c.area, 12);
+    if (dens > maxDensity) maxDensity = dens;
+  }
+  const MAX_H = 72;
+  const scaleH = maxDensity > 0 ? MAX_H / maxDensity : 1;
+
+  for (const c of counties) {
+    const [rV, dV, oV] = race.counties?.[c.key] || [0, 0, 0];
+    const tot = rV + dV + oV;
+    c.rVotes = rV;
+    c.dVotes = dV;
+    c.oVotes = oV;
+    c.totVotes = tot;
+
+    c.shR = tot > 0 ? rV / tot : 0;
+    c.shD = tot > 0 ? dV / tot : 0;
+    c.shO = tot > 0 ? oV / tot : 0;
+
+    const effArea = Math.max(c.area, 12);
+    const totalH = (tot / effArea) * scaleH;
+    c.hR = totalH * c.shR;
+    c.hD = totalH * c.shD;
+    c.hO = totalH * c.shO;
+
+    c.marginColor = new THREE.Color(marginColorHex(rV, dV));
   }
 
-  const pitchers = Object.fromEntries(PARTY.map(p => [p, makePitcher(p)]));
+  buildPourSchedule();
 
-  function writeLabel(pi, name, left) {
-    const kVal = fmt(left / 1000);
-    const text = `${name}|${kVal}`;
-    if (text === pi.text) return;
-    pi.text = text;
-    const x = pi.canvas.getContext('2d'), W = pi.canvas.width, Hh = pi.canvas.height;
-    x.clearRect(0, 0, W, Hh);
-    x.fillStyle = 'rgba(9, 22, 30, 0.92)';
-    x.strokeStyle = PARTY_HEX[pi.party];
-    x.lineWidth = 6;
-    x.beginPath();
-    x.roundRect(4, 4, W - 8, Hh - 8, 22);
-    x.fill();
-    x.stroke();
-    x.textAlign = 'center';
-    x.fillStyle = '#f2f7f5';
-    x.font = '600 25px "Plus Jakarta Sans", system-ui, sans-serif';
-    x.fillText(name, W / 2, 46);
-    x.font = '700 40px "Outfit", system-ui, sans-serif';
-    x.fillText(`${kVal} mil votos`, W / 2, 98);
-    pi.tex.needsUpdate = true;
+  if (mode === 'pour') {
+    startPourAnimation();
+  } else {
+    resetPourArrays(counties.length, true);
+    for (const c of counties) stack(c);
   }
 
-  const streamMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.92 });
-  const stream = new THREE.Mesh(new THREE.CylinderGeometry(1.15, 0.85, 1, 16, 1, true), streamMat);
-  stream.visible = false;
-  scene.add(stream);
+  if (selectedCounty) showDetail(selectedCounty);
+}
 
-  const N = 160;
-  const drops = new THREE.InstancedMesh(new THREE.SphereGeometry(0.8, 6, 4), new THREE.MeshBasicMaterial({ color: 0xffffff }), N);
-  drops.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-  drops.frustumCulled = false;
-  scene.add(drops);
-  const dropList = Array.from({ length: N }, () => ({ live: false, p: new THREE.Vector3(), v: new THREE.Vector3(), age: 0, floor: 0, size: 1 }));
-  const dm = new THREE.Matrix4(), dq = new THREE.Quaternion(), ds = new THREE.Vector3();
+function setMode(newMode) {
+  mode = newMode;
+  for (const btn of modeToggle.querySelectorAll('button')) {
+    btn.classList.toggle('active', btn.dataset.mode === mode);
+  }
 
-  const rings = Array.from({ length: 10 }, () => {
-    const m = new THREE.Mesh(
-      new THREE.RingGeometry(1.0, 1.55, 40),
-      new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide })
-    );
-    m.rotation.x = -Math.PI / 2;
-    m.visible = false;
-    scene.add(m);
-    return { m, age: 9 };
-  });
-
-  let nextDrop = 0, nextRing = 0, ringClock = 0;
-  function splash(at, color, flow, dt) {
-    const n = Math.min(4, Math.round((24 + 45 * flow) * dt + Math.random() * 0.5));
-    for (let k = 0; k < n; k++) {
-      const d = dropList[nextDrop = (nextDrop + 1) % N];
-      const a = Math.random() * Math.PI * 2, out = 9 + Math.random() * 24;
-      d.live = true; d.age = 0; d.size = 0.45 + Math.random() * 0.6; d.floor = at.y;
-      d.p.copy(at);
-      d.v.set(Math.cos(a) * out, 22 + Math.random() * 38 * flow, Math.sin(a) * out);
-      drops.setColorAt(nextDrop, color);
+  if (mode === 'flat') {
+    targetPrismMix = 0;
+    pour.active = false;
+    pour.done = true;
+    hideAllPitchers();
+    resetPourArrays(counties.length, true);
+    startCamTween(CAM_2D_POS, new THREE.Vector3(0, 0, 0), 0.65);
+  } else if (mode === 'prism') {
+    targetPrismMix = 1;
+    pour.active = false;
+    pour.done = true;
+    hideAllPitchers();
+    resetPourArrays(counties.length, true);
+    if (camera.position.distanceTo(CAM_2D_POS) < 35) {
+      startCamTween(CAM_3D_POS, new THREE.Vector3(0, 0, 0), 0.7);
     }
-    if (drops.instanceColor) drops.instanceColor.needsUpdate = true;
-    if ((ringClock += dt) > 0.16) {
-      ringClock = 0;
-      const r = rings[nextRing = (nextRing + 1) % rings.length];
-      r.age = 0; r.m.visible = true;
-      r.m.material.color.copy(color).lerp(new THREE.Color('#ffffff'), 0.35);
-      r.m.position.copy(at).add(up.set(0, 1.2, 0));
+    for (const c of counties) stack(c);
+  } else if (mode === 'pour') {
+    targetPrismMix = 1;
+    prismMix = 1;
+    if (camera.position.distanceTo(CAM_2D_POS) < 35) {
+      startCamTween(CAM_3D_POS, new THREE.Vector3(0, 0, 0), 0.7);
+    }
+    startPourAnimation();
+  }
+}
+
+modeToggle.addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-mode]');
+  if (!btn) return;
+  setMode(btn.dataset.mode);
+});
+
+// Sync initial active button in HUD
+for (const btn of modeToggle.querySelectorAll('button')) {
+  btn.classList.toggle('active', btn.dataset.mode === mode);
+}
+
+// ============================================================================
+// Detail Panel & Tooltip
+// ============================================================================
+function showDetail(c) {
+  selectedCounty = c;
+  detailPanel.hidden = false;
+  dpName.textContent = c.name;
+  dpSub.textContent = `${curRace?.year || ''} · ${curRace?.office || ''}`;
+
+  const fmt = new Intl.NumberFormat('pt-BR');
+  const rWins = c.rVotes >= c.dVotes;
+  const winName = rWins ? (curRace?.rep || 'PL') : (curRace?.dem || 'PT');
+  const winPct = ((rWins ? c.shR : c.shD) * 100).toFixed(1);
+  dpWinner.innerHTML = `<span class="${rWins ? 'r' : 'd'}">${winName} +${(Math.abs(c.shR - c.shD) * 100).toFixed(1)}% (${winPct}%)</span>`;
+
+  dpRows.innerHTML = `
+    <div class="dp-row"><span class="d">${curRace?.dem || 'PT'}</span><strong>${fmt.format(c.dVotes)} (${(c.shD * 100).toFixed(1)}%)</strong></div>
+    <div class="dp-row"><span class="r">${curRace?.rep || 'PL'}</span><strong>${fmt.format(c.rVotes)} (${(c.shR * 100).toFixed(1)}%)</strong></div>
+    ${c.oVotes > 0 ? `<div class="dp-row"><span>Outros</span><strong>${fmt.format(c.oVotes)} (${(c.shO * 100).toFixed(1)}%)</strong></div>` : ''}
+  `;
+  dpTotal.textContent = `Total: ${fmt.format(c.totVotes)} votos`;
+}
+
+dpClose.addEventListener('click', () => {
+  detailPanel.hidden = true;
+  selectedCounty = null;
+});
+
+// ============================================================================
+// Camera Buttons & Raycasting
+// ============================================================================
+document.getElementById('zoomIn')?.addEventListener('click', () => {
+  camera.position.lerp(controls.target, 0.22);
+});
+document.getElementById('zoomOut')?.addEventListener('click', () => {
+  const dir = camera.position.clone().sub(controls.target).multiplyScalar(1.25);
+  camera.position.copy(controls.target).add(dir);
+});
+document.getElementById('camReset')?.addEventListener('click', () => {
+  startCamTween(CAM_3D_POS, new THREE.Vector3(0, 0, 0), 0.65);
+});
+document.getElementById('camTop')?.addEventListener('click', () => {
+  setMode(mode === 'flat' ? 'prism' : 'flat');
+});
+
+const raycaster = new THREE.Raycaster();
+const pointer = new THREE.Vector2();
+const pickMeshes = [];
+
+renderer.domElement.addEventListener('pointermove', (e) => {
+  const rect = renderer.domElement.getBoundingClientRect();
+  pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+  pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+
+  raycaster.setFromCamera(pointer, camera);
+  const hits = raycaster.intersectObjects(pickMeshes, false);
+  if (hits.length > 0) {
+    const c = hits[0].object.userData.county;
+    if (c) {
+      hoveredCounty = c;
+      const fmt = new Intl.NumberFormat('pt-BR');
+      tooltip.hidden = false;
+      tooltip.style.left = `${e.clientX - rect.left + 14}px`;
+      tooltip.style.top = `${e.clientY - rect.top + 14}px`;
+      tooltip.innerHTML = `<strong>${c.name}</strong><br/>${fmt.format(c.totVotes)} votos`;
+      return;
     }
   }
+  hoveredCounty = null;
+  tooltip.hidden = true;
+});
 
-  function stepDrops(dt) {
-    dropList.forEach((d, k) => {
-      if (d.live) {
-        d.age += dt;
-        d.v.y -= 145 * dt;
-        d.p.addScaledVector(d.v, dt);
-        if ((d.v.y < 0 && d.p.y < d.floor) || d.age > 1.25) d.live = false;
+let downPos = { x: 0, y: 0 };
+renderer.domElement.addEventListener('pointerdown', (e) => {
+  downPos = { x: e.clientX, y: e.clientY };
+});
+renderer.domElement.addEventListener('pointerup', (e) => {
+  if (Math.hypot(e.clientX - downPos.x, e.clientY - downPos.y) > 6) return;
+  if (hoveredCounty) showDetail(hoveredCounty);
+});
+
+// ============================================================================
+// Load Data via STATE & Build 3D Prisms
+// ============================================================================
+async function init() {
+  const [geo, r2026, rHist] = await Promise.all([
+    fetch(STATE.data.geo).then(r => r.json()),
+    fetch(STATE.data.r2026).then(r => r.json()),
+    STATE.data.history ? fetch(STATE.data.history).then(r => r.json()) : Promise.resolve({ order: [], races: {} }),
+  ]);
+
+  const features = (geo.features || []).filter(f => f.geometry);
+  const proj = geoMercator().fitSize([220, 220], { type: 'FeatureCollection', features });
+
+  // Add surrounding geographic context map (Z-up: yUp = false)
+  createContextMap({
+    group: scene,
+    proj: (lon, lat) => {
+      const p = proj([lon, lat]);
+      return p ? [p[0] - 110, 110 - p[1]] : [NaN, NaN];
+    },
+    uf: STATE.uf,
+    yUp: false,
+  });
+
+  counties = features.map((f, idx) => {
+    const name = f.properties.name || `Município ${idx + 1}`;
+    const key = name.toUpperCase();
+    const polys = f.geometry.type === 'Polygon' ? [f.geometry.coordinates] : f.geometry.coordinates;
+
+    const shapes = [];
+    const borderPts = [];
+    let area = 0;
+    let cx = 0;
+    let cy = 0;
+    let nPts = 0;
+
+    for (const poly of polys) {
+      const outer = poly[0].map(([lon, lat]) => {
+        const [px, py] = proj([lon, lat]);
+        return [px - 110, 110 - py];
+      });
+      if (outer.length < 3) continue;
+      const a = Math.abs(ringArea2D(outer));
+      area += a;
+
+      const sh = new THREE.Shape();
+      outer.forEach(([x, y], i) => {
+        if (i === 0) sh.moveTo(x, y);
+        else sh.lineTo(x, y);
+        cx += x;
+        cy += y;
+        nPts++;
+      });
+
+      for (let h = 1; h < poly.length; h++) {
+        const holeRing = poly[h].map(([lon, lat]) => {
+          const [px, py] = proj([lon, lat]);
+          return [px - 110, 110 - py];
+        });
+        if (holeRing.length >= 3) {
+          const hp = new THREE.Path();
+          holeRing.forEach(([x, y], i) => (i === 0 ? hp.moveTo(x, y) : hp.lineTo(x, y)));
+          sh.holes.push(hp);
+        }
       }
-      ds.setScalar(d.live ? d.size * 4.0 * (1 - 0.55 * d.age) : 0);
-      drops.setMatrixAt(k, dm.compose(d.p, dq, ds));
-    });
-    drops.instanceMatrix.needsUpdate = true;
-    for (const r of rings) {
-      if (!r.m.visible) continue;
-      r.age += dt;
-      r.m.scale.setScalar(2.5 + r.age * 26);
-      r.m.material.opacity = Math.max(0, 0.65 * (1 - r.age / 0.9));
-      if (r.age > 0.9) r.m.visible = false;
+      shapes.push(sh);
+
+      for (let i = 0; i < outer.length; i++) {
+        const [x1, y1] = outer[i];
+        const [x2, y2] = outer[(i + 1) % outer.length];
+        borderPts.push(new THREE.Vector3(x1, y1, 0), new THREE.Vector3(x2, y2, 0));
+      }
     }
-  }
 
-  let job = null;
-  const votesOf = (c, P) => P === 'D' ? c.dem : P === 'R' ? c.rep : c.other;
-
-  // Constrói uma trajetória Catmull-Rom 3D super suave sobre os polos regionais de cada partido
-  function buildPartyPass(P, startTime, H) {
-    const active = counties.filter(c => votesOf(c, P) > 0);
-    if (!active.length) return null;
-
-    const byVotes = [...active].sort((a, b) => votesOf(b, P) - votesOf(a, P));
-    const hubs = [];
-    for (const cand of byVotes) {
-      if (hubs.length >= 6) break;
-      const tooClose = hubs.some(h => Math.hypot(h.ox - cand.ox, h.oy - cand.oy) < 95);
-      if (!tooClose || hubs.length < 3) hubs.push(cand);
+    if (nPts > 0) {
+      cx /= nPts;
+      cy /= nPts;
     }
-    hubs.sort((a, b) => b.oy - a.oy);
 
-    const cruiseZ = 115;
-    const sh = SHELF[P];
-    const pts = [
-      new THREE.Vector3(sh.x, sh.y, sh.z),
-      new THREE.Vector3(hubs[0].ox * 0.7 + sh.x * 0.3, hubs[0].oy + 60, cruiseZ),
-      ...hubs.map(c => new THREE.Vector3(c.ox, c.oy, Math.max(cruiseZ, Math.min(185, H(c) * 0.55 + 75)))),
-      new THREE.Vector3(hubs[hubs.length - 1].ox * 0.6 + sh.x * 0.4, hubs[hubs.length - 1].oy - 40, cruiseZ),
-      new THREE.Vector3(sh.x, sh.y, sh.z),
+    const extGeo = new THREE.ExtrudeGeometry(shapes, { depth: 1, bevelEnabled: false });
+
+    const makePartyMats = (col) => [
+      new THREE.MeshStandardMaterial({ color: col.clone(), roughness: 0.35, metalness: 0.06 }),
+      new THREE.MeshStandardMaterial({ color: col.clone().multiplyScalar(0.78), roughness: 0.52, metalness: 0.08 }),
     ];
-    const curve = new THREE.CatmullRomCurve3(pts, false, 'centripetal', 0.45);
 
-    const samples = 80;
-    const samplePts = [];
-    for (let i = 0; i <= samples; i++) {
-      const u = 0.12 + (0.76 * i) / samples;
-      samplePts.push({ u, pt: curve.getPoint(u) });
-    }
+    const matR = makePartyMats(REP_C);
+    const matD = makePartyMats(DEM_C);
+    const matO = makePartyMats(OTH_C);
+    const matBase = new THREE.MeshStandardMaterial({ color: NEUTRAL_EMPTY_C, roughness: 0.7, metalness: 0.1 });
 
-    const dur = P === 'O' ? 3.2 : 5.6;
-    const items = active.map(c => {
-      let bestU = 0.5, bestD = Infinity;
-      for (const s of samplePts) {
-        const d = Math.hypot(c.ox - s.pt.x, c.oy - s.pt.y);
-        if (d < bestD) { bestD = d; bestU = s.u; }
-      }
-      const v = votesOf(c, P);
-      const targetH = H(c) * (v / (c.total || 1));
-      const tStart = startTime + (bestU - 0.06) * dur;
-      const fillDur = Math.max(0.85, Math.min(1.4, dur * 0.25));
-      return { c, P, votes: v, targetH, tStart, tEnd: tStart + fillDur };
-    });
+    const meshR = new THREE.Mesh(extGeo, matR);
+    const meshD = new THREE.Mesh(extGeo, matD);
+    const meshO = new THREE.Mesh(extGeo, matO);
+    const baseMesh = new THREE.Mesh(extGeo, matBase);
+    baseMesh.visible = false;
 
-    return {
-      P,
-      curve,
-      startTime,
-      endTime: startTime + dur,
-      dur,
-      items,
+    meshR.castShadow = true;
+    meshR.receiveShadow = true;
+    meshD.castShadow = true;
+    meshD.receiveShadow = true;
+
+    mapGroup.add(baseMesh, meshO, meshR, meshD);
+
+    const lineGeo = new THREE.BufferGeometry().setFromPoints(borderPts);
+    const lineMat = new THREE.LineBasicMaterial({ color: 0xe2e8f0, transparent: true, opacity: 0.38 });
+    const borderLine = new THREE.LineSegments(lineGeo, lineMat);
+    mapGroup.add(borderLine);
+
+    const countyObj = {
+      idx,
+      name,
+      key,
+      area: Math.max(area, 1),
+      cx,
+      cy,
+      meshR,
+      meshD,
+      meshO,
+      baseMesh,
+      matR,
+      matD,
+      matO,
+      borderLine,
+      marginColor: OTH_C.clone(),
+      currentTopZ: 1,
     };
-  }
 
-  function plan(t0) {
-    const H = c => heightOf(c, 'volume');
-    const total = P => counties.reduce((n, c) => n + votesOf(c, P), 0);
-    const grandTotal = Math.max(1, total('D') + total('R') + total('O'));
-    const order = [];
-    if (total('O') / grandTotal > 0.01) order.push('O');
-    if (total('D') <= total('R')) order.push('D', 'R');
-    else order.push('R', 'D');
+    meshR.userData.county = countyObj;
+    meshD.userData.county = countyObj;
+    meshO.userData.county = countyObj;
+    baseMesh.userData.county = countyObj;
+    pickMeshes.push(meshR, meshD, meshO, baseMesh);
 
-    let t = 0;
-    const passes = [];
-    for (const P of order) {
-      const pass = buildPartyPass(P, t, H);
-      if (pass) {
-        passes.push(pass);
-        t = pass.endTime + 0.35;
-      }
-    }
-    return {
-      t0,
-      passes,
-      done: t + 0.5,
-      H,
-      totals: Object.fromEntries(PARTY.map(P => [P, total(P)])),
-    };
-  }
-
-  const names = () => ({
-    D: race.dem || 'PT',
-    R: race.rep || 'PL',
-    O: 'Outros / 3ª Via',
+    return countyObj;
   });
 
-  let last = 0;
-  const yaw = new THREE.Quaternion(), tipQ = new THREE.Quaternion(), col = new THREE.Color(), tipPos = new THREE.Vector3();
+  // Merge races from r2026 and rHist
+  allRaces = { ...(rHist.races || {}), ...(r2026.races || {}) };
+  const order = [...(r2026.order || []), ...(rHist.order || [])];
 
-  return {
-    get running() { return !!job; },
-    start(when) {
-      job = plan(when);
-      last = when;
-      for (const pi of Object.values(pitchers)) {
-        pi.tilt = 0;
-        pi.text = '';
-        pi.pos.set(0, 0, 0);
-      }
-    },
-    stop(finish) {
-      if (!job) return;
-      if (finish) {
-        for (const c of counties) {
-          const h = job.H(c);
-          const t = c.total || 1;
-          c.cur = {
-            R: c.total ? h * (c.rep / t) : 0,
-            D: c.total ? h * (c.dem / t) : 0,
-            O: c.total ? h * (c.other / t) : 0,
-          };
-          c.paintProgress = 1;
-          c.extra = 0;
-          updateCountyMaterials(c, 1);
-          stack(c);
-        }
-      }
-      job = null;
-      stream.visible = false;
-      for (const pi of Object.values(pitchers)) pi.g.visible = false;
-      dropList.forEach(d => d.live = false);
-      stepDrops(0);
-      for (const r of rings) r.m.visible = false;
-    },
-    update(now) {
-      if (!job) return;
-      const dt = Math.min(0.05, Math.max(0, (now - last) / 1000));
-      last = now;
-      const t = (now - job.t0) / 1000;
+  racesByYear = {};
+  for (const rk of order) {
+    const r = allRaces[rk];
+    if (!r) continue;
+    const y = String(r.year);
+    if (!racesByYear[y]) racesByYear[y] = [];
+    racesByYear[y].push({ key: rk, label: r.office || rk });
+  }
 
-      // Posiciona os jarros na prateleira mesmo durante a contagem regressiva inicial (t < 0)
-      const view = new THREE.Spherical().setFromVector3(camera.position.clone().sub(controls.target));
-      yaw.setFromAxisAngle(up.set(0, 1, 0), view.theta);
-      const nm = names();
+  const years = Object.keys(racesByYear).sort((a, b) => Number(b) - Number(a));
+  yearSelect.innerHTML = years.map(y => `<option value="${y}">${y}</option>`).join('');
 
-      if (t < 0) {
-        for (const P of PARTY) {
-          const pi = pitchers[P];
-          const pass = job.passes.find(p => p.P === P);
-          if (!pass || job.totals[P] <= 0) { pi.g.visible = false; continue; }
-          pi.g.visible = true;
-          pi.g.quaternion.copy(yaw);
-          pi.g.position.set(0, 0, 0);
-          pi.g.updateMatrixWorld(true);
-          tipPos.copy(TIP).applyMatrix4(pi.g.matrixWorld);
-          const sh = SHELF[P];
-          pi.pos.copy(world(sh.x, sh.y, sh.z).sub(tipPos));
-          pi.g.position.copy(pi.pos);
-          pi.g.updateMatrixWorld(true);
-          pi.liquid.scale.y = 1;
-          pi.liquid.visible = pi.surface.visible = true;
-          pi.surface.position.y = 15.0;
-          pi.surface.quaternion.copy(pi.g.quaternion).invert().multiply(flatQ);
-          writeLabel(pi, nm[P], job.totals[P]);
-        }
-        return;
-      }
+  function populateRacesForYear(y) {
+    const list = racesByYear[y] || [];
+    raceSelect.innerHTML = list.map(item => `<option value="${item.key}">${item.label}</option>`).join('');
+    if (list.length > 0) applyRace(list[0].key);
+  }
 
-      const left = { ...job.totals };
-      for (const c of counties) {
-        c.cur.D = 0; c.cur.R = 0; c.cur.O = 0;
-        c.paintProgress = 0;
-        c.extra = 0;
-      }
+  yearSelect.addEventListener('change', () => populateRacesForYear(yearSelect.value));
+  raceSelect.addEventListener('change', () => applyRace(raceSelect.value));
 
-      let activePass = null;
-      let activeU = 0;
+  if (years.length > 0) {
+    yearSelect.value = years[0];
+    populateRacesForYear(years[0]);
+  }
+}
 
-      for (const pass of job.passes) {
-        if (t >= pass.startTime && t <= pass.endTime) {
-          activePass = pass;
-          activeU = (t - pass.startTime) / pass.dur;
-        }
-        for (const it of pass.items) {
-          const u = smoothstep(it.tStart, it.tEnd, t);
-          if (u <= 0) continue;
-          left[it.P] -= it.votes * u;
-          it.c.cur[it.P] = it.targetH * u;
-          it.c.paintProgress = Math.max(it.c.paintProgress, smoothstep(0, 0.45, u));
-          if (u > 0 && u < 1) {
-            const bell = Math.sin(u * Math.PI);
-            it.c.extra = Math.max(it.c.extra, Math.min(2.0, it.targetH * 0.05) * bell);
-          }
-        }
-      }
+function onResize() {
+  const w = mapArea.clientWidth || window.innerWidth;
+  const h = mapArea.clientHeight || window.innerHeight;
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  renderer.setSize(w, h);
+}
+window.addEventListener('resize', onResize);
+onResize();
 
-      const lastPass = job.passes[job.passes.length - 1];
-      const blendProgress = lastPass ? smoothstep(lastPass.startTime + lastPass.dur * 0.35, lastPass.endTime + 0.25, t) : 1;
+let lastT = performance.now();
+function animate(now) {
+  requestAnimationFrame(animate);
+  const dt = Math.min(0.05, (now - lastT) / 1000);
+  lastT = now;
 
-      for (const c of counties) {
-        updateCountyMaterials(c, blendProgress);
-        stack(c);
-      }
+  if (camTween) {
+    camTween.t += dt / camTween.dur;
+    const k = Math.min(1, camTween.t);
+    const ease = 1 - Math.pow(1 - k, 3);
+    camera.position.lerpVectors(camTween.fromPos, camTween.toPos, ease);
+    controls.target.lerpVectors(camTween.fromTarget, camTween.toTarget, ease);
+    if (k >= 1) camTween = null;
+  }
 
-      for (const P of PARTY) {
-        const pi = pitchers[P];
-        const pass = job.passes.find(p => p.P === P);
-        if (!pass || job.totals[P] <= 0) {
-          pi.g.visible = false;
-          continue;
-        }
-        pi.g.visible = true;
-        let pt;
-        let targetTilt = 0;
-        if (t <= pass.startTime) {
-          pt = SHELF[P];
-          targetTilt = 0;
-        } else if (t >= pass.endTime) {
-          pt = SHELF[P];
-          targetTilt = 0;
-        } else {
-          const rawU = (t - pass.startTime) / pass.dur;
-          const easedU = easeQuint(Math.max(0, Math.min(1, rawU)));
-          pt = pass.curve.getPoint(easedU);
-          const pourWindow = smoothstep(0.08, 0.20, rawU) * (1 - smoothstep(0.80, 0.94, rawU));
-          targetTilt = 1.05 * pourWindow;
-        }
+  if (Math.abs(prismMix - targetPrismMix) > 1e-4) {
+    const step = dt * 2.8;
+    if (prismMix < targetPrismMix) prismMix = Math.min(targetPrismMix, prismMix + step);
+    else prismMix = Math.max(targetPrismMix, prismMix - step);
+    for (const c of counties) stack(c);
+  } else if (prismMix !== targetPrismMix) {
+    prismMix = targetPrismMix;
+    for (const c of counties) stack(c);
+  }
 
-        pi.tilt += (targetTilt - pi.tilt) * Math.min(1, dt * 10);
-        tipQ.setFromAxisAngle(up.set(0, 0, 1), -pi.tilt);
-        pi.g.quaternion.copy(yaw).multiply(tipQ);
-        pi.g.position.set(0, 0, 0);
-        pi.g.updateMatrixWorld(true);
-        tipPos.copy(TIP).applyMatrix4(pi.g.matrixWorld);
+  if (mode === 'pour' && pour.active) {
+    stepPour(dt);
+  }
 
-        const worldTarget = world(pt.x, pt.y, pt.z).sub(tipPos);
-        if (pi.pos.lengthSq() === 0) pi.pos.copy(worldTarget);
-        else pi.pos.lerp(worldTarget, Math.min(1, dt * 14));
-        pi.g.position.copy(pi.pos);
-        pi.g.updateMatrixWorld(true);
+  controls.update();
+  renderer.render(scene, camera);
+}
 
-        const frac = Math.max(0, left[P] / Math.max(1, job.totals[P]));
-        pi.liquid.scale.y = Math.max(0.001, frac);
-        pi.liquid.visible = pi.surface.visible = frac > 0.002;
-        pi.surface.position.y = 0.6 + 14.4 * frac;
-        pi.surface.quaternion.copy(pi.g.quaternion).invert().multiply(flatQ);
-        writeLabel(pi, nm[P], Math.max(0, left[P]));
-      }
-
-      if (activePass) {
-        const P = activePass.P;
-        const pi = pitchers[P];
-        const flow = smoothstep(0.08, 0.18, activeU) * (1 - smoothstep(0.82, 0.93, activeU));
-        if (flow > 0.02) {
-          tipPos.copy(TIP).applyMatrix4(pi.g.matrixWorld);
-          col.set(PARTY_HEX[P]);
-          streamMat.color.copy(col);
-
-          const curvePt = activePass.curve.getPoint(easeQuint(activeU));
-          let groundZ = H_BASE;
-          let bestD = Infinity;
-          for (const c of counties) {
-            const d = Math.hypot(c.ox - curvePt.x, c.oy - curvePt.y);
-            if (d < bestD) {
-              bestD = d;
-              groundZ = Math.max(H_BASE, c.cur.D + c.cur.R + c.cur.O);
-            }
-          }
-          hit.copy(world(curvePt.x, curvePt.y, groundZ));
-          hit.x = tipPos.x;
-          hit.z = tipPos.z;
-          const len = Math.max(0.1, tipPos.y - hit.y);
-          const rad = 2.6 * flow * (1 + 0.04 * Math.sin(t * 16));
-          stream.visible = true;
-          stream.position.set(tipPos.x, (tipPos.y + hit.y) / 2, tipPos.z);
-          stream.scale.set(rad, len, rad);
-          splash(hit, col, flow, dt);
-        } else {
-          stream.visible = false;
-        }
-      } else {
-        stream.visible = false;
-      }
-
-      stepDrops(dt);
-      if (t > job.done) {
-        this.stop(true);
-        writeNote();
-      }
-    },
-  };
-})();
-
-const q = new URLSearchParams(location.search);
-setRace(q.get('race') || '2026-pres-2t');
-if (['votes', 'volume', 'fill'].includes(q.get('step'))) setStep(q.get('step'));
-requestAnimationFrame(frame);
+init().then(() => {
+  requestAnimationFrame(animate);
+});

@@ -2,6 +2,27 @@
 import { geoMercator, geoPath } from 'd3-geo';
 import { STATES } from './state.js';
 import { marginColorHex, leadColorHex, shiftColorHex, REP_C, DEM_C } from './colors.js';
+import { initCustomSelects } from './custom-select.js';
+
+function applyHomeTheme(theme) {
+  const t = (theme === 'light' || theme === 'contrast') ? theme : 'dark';
+  document.documentElement.classList.toggle('theme-light', t === 'light');
+  document.documentElement.classList.toggle('theme-contrast', t === 'contrast');
+  document.body.classList.toggle('theme-light', t === 'light');
+  document.body.classList.toggle('theme-contrast', t === 'contrast');
+  try { localStorage.setItem('brvote_theme', t); } catch {}
+}
+
+const savedHomeTheme = (() => {
+  try { return localStorage.getItem('brvote_theme') || 'dark'; } catch { return 'dark'; }
+})();
+applyHomeTheme(savedHomeTheme);
+
+const homeThemeSelect = document.getElementById('homeThemeSelect');
+if (homeThemeSelect) {
+  homeThemeSelect.value = savedHomeTheme;
+  homeThemeSelect.onchange = () => applyHomeTheme(homeThemeSelect.value);
+}
 
 const fmt = n => Math.round(n).toLocaleString('pt-BR');
 
@@ -54,6 +75,7 @@ readyEl.innerHTML = `
 
 const homeStateSelect = document.getElementById('homeStateSelect');
 const featuredCardEl = document.getElementById('featuredCard');
+initCustomSelects(document);
 
 function renderFeaturedCard(s) {
   selectedState = s;

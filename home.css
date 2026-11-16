@@ -461,3 +461,61 @@ html, body {
   .map-col { order: -1; }
   .all ul { columns: 2 140px; }
 }
+
+/* Suporte completo a Claro Editorial e Alto Contraste na Home Page */
+body.theme-light .home h1 {
+  background: linear-gradient(95deg, #0f172a 0%, #065f46 58%, #047857 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+body.theme-light .nat-bar,
+body.theme-light .state-card,
+body.theme-light .state-picker-bar {
+  background: #ffffff;
+  border-color: #d6cfc2;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+}
+body.theme-light .nat-btn {
+  background: #f6f3ec;
+  color: #1e293b;
+  border-color: #cfc7b6;
+}
+body.theme-light .nat-btn.primary {
+  background: linear-gradient(135deg, #059669 0%, #047857 100%);
+  color: #ffffff;
+  border-color: #047857;
+}
+body.theme-light .seg {
+  background: #efeae0;
+  border-color: #cfc7b6;
+}
+body.theme-light .seg button.active {
+  background: #047857;
+  color: #ffffff;
+}
+body.theme-light #map {
+  background: radial-gradient(circle at 50% 42%, #faf8f3 0%, #ebe5d8 100%);
+  border-color: #d6cfc2;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+}
+body.theme-light .st {
+  stroke: #f6f3ec;
+}
+body.theme-light .state-metric,
+body.theme-light .state-card .view,
+body.theme-light .state-quick-links a {
+  background: #f8f6f0;
+  border-color: #d6cfc2;
+  color: #1e293b;
+}
+body.theme-light .state-card .view.first {
+  background: rgba(4, 120, 87, 0.08);
+  border-color: #047857;
+}
+body.theme-light .all li {
+  border-bottom-color: #ded8cb;
+}
+body.theme-light .home footer a {
+  color: #047857;
+}
+

@@ -42,29 +42,10 @@
     <div class="mun-card" id="munCard" style="display:none" aria-live="polite"></div>
 
     <div class="section">
-      <h2>A ideia</h2>
+      <h2>A filosofia dos pontos</h2>
       <div class="caption" style="margin-top:0" id="idea">
         Um mapa plano pinta cada quilômetro quadrado de azul ou vermelho — mesmo onde quase ninguém mora.
-        Aqui, a terra sem moradores fica escura. Cada ponto é um grupo real de eleitores daquele partido, posicionado dentro da zona eleitoral onde votaram.
-      </div>
-    </div>
-
-    <div class="section" id="tourSection">
-      <h2>Tour guiado pela densidade demográfica</h2>
-      <div class="tour-card">
-        <div class="tour-top">
-          <span class="tour-step" id="tourStep">Parada 1 de 6</span>
-          <button id="tourPlay" class="active" type="button">▶ Reproduzir tour</button>
-        </div>
-        <div class="tour-title" id="tourTitle">Visão geral do estado</div>
-        <div class="tour-body" id="tourBody">
-          Grande parte do território fica quase vazia; os votos concentram-se nas áreas metropolitanas e polos regionais.
-        </div>
-        <div class="tour-nav">
-          <button id="tourPrev" type="button">← Anterior</button>
-          <div class="tour-dots" id="tourDots"></div>
-          <button id="tourNext" type="button">Próxima →</button>
-        </div>
+        Aqui, áreas rurais de baixa densidade ficam serenas e suaves, enquanto os grandes centros urbanos brilham proporcionalmente à sua densidade eleitoral. As cores do PL e do PT possuem luminância perceptual calibrada para mesma intensidade visual.
       </div>
     </div>
 
@@ -108,8 +89,8 @@
           <a id="compareLink" class="compare-link" href="compare.html" title="Comparar dois mapas lado a lado">Comparar ⇆</a>
         </div>
         <div class="picker-row" id="picker">
-          <label class="pick"><span>Ano</span><select id="yearSelect" aria-label="Ano"></select></label>
-          <label class="pick grow"><span>Disputa</span><select id="raceSelect" aria-label="Disputa"></select></label>
+          <label class="pick"><span>Ano</span><select id="yearSelect" aria-label="Ano"><option value="2026">2026</option></select></label>
+          <label class="pick grow"><span>Disputa</span><select id="raceSelect" aria-label="Disputa"><option value="2026_pres">Presidente</option></select></label>
         </div>
         <div class="go-row" id="goRow">
           <div class="mun-search-wrap">
@@ -131,10 +112,36 @@
       <div id="stage">
         <div id="labels"></div>
       </div>
+
+      <!-- Tour de Pontos sobreposto diretamente sobre o mapa (desktop e celular) -->
+      <div class="tour-hud-overlay" id="tourSection" role="region" aria-label="Tour guiado pela densidade demográfica">
+        <div class="tour-card">
+          <div class="tour-top">
+            <span class="tour-step" id="tourStep">Parada 1 de 6</span>
+            <div class="tour-top-actions">
+              <button id="tourPlay" class="active" type="button">▶ Reproduzir tour</button>
+              <button id="tourCloseBtn" class="tour-exit-btn" type="button" title="Sair do tour guiado e explorar livremente">✕ Sair</button>
+            </div>
+          </div>
+          <div class="tour-title" id="tourTitle">Visão geral do estado</div>
+          <div class="tour-body" id="tourBody">
+            Grande parte do território fica quase vazia; os votos concentram-se nas áreas metropolitanas e polos regionais.
+          </div>
+          <div class="tour-nav">
+            <button id="tourPrev" type="button">← Anterior</button>
+            <div class="tour-dots" id="tourDots"></div>
+            <button id="tourNext" type="button">Próxima →</button>
+          </div>
+        </div>
+      </div>
+
       <div id="busy" aria-live="polite" aria-busy="false">
         <div class="busy-card"><span class="busy-spin"></span><span id="busyText">Posicionando pontos de eleitores…</span></div>
       </div>
       <div class="controls">
+        <div class="pill" id="tourReopenPill" style="display:none">
+          <button id="tourReopenBtn" class="active" type="button">▶ Abrir Tour de Pontos</button>
+        </div>
         <div class="pill">
           <span id="dotCount" style="color:var(--muted);font-variant-numeric:tabular-nums"></span>
         </div>

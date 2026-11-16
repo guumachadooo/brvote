@@ -1,7 +1,13 @@
-// Rampas de cores: PT / Campo Trabalhista (Vermelho) vs. PL / Campo Conservador (Azul)
-export const DEM_C = ['#f6b4b4', '#ee8484', '#e35656', '#d72f30', '#ad1d1e', '#7a1112'];
-export const REP_C = ['#b8c9f8', '#8aa6f2', '#5d82e8', '#3b5bdb', '#2742b0', '#192c7a'];
-export const OTHER_HEX = '#7a8599';
+// Rampas de cores calibradas para iso-luminância perceptiva humana (CIE L* / fotópica):
+// PT / Campo Trabalhista (Coral-Rubi) vs. PL / Campo Conservador (Azul-Celeste Vibrante) com mesma chamatividade
+export const DEM_C = ['#facdcd', '#f29b9b', '#e66a6a', '#d64545', '#ba2525', '#911111'];
+export const REP_C = ['#b8e1ff', '#7cc4fa', '#47a3f3', '#2186eb', '#0967d2', '#0552b5'];
+export const OTHER_HEX = '#7a8a9e';
+
+// Cores de pontos com luminância perceptiva equivalente em fundo escuro
+export const DOT_REP_HEX = '#38bdf8';
+export const DOT_DEM_HEX = '#f87171';
+export const DOT_OTH_HEX = '#94a3b8';
 
 export function bandIndex(marginPct) {
   const a = Math.abs(marginPct);
@@ -29,14 +35,14 @@ function toHex(rgb) {
   const c = v => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0');
   return '#' + c(rgb[0]) + c(rgb[1]) + c(rgb[2]);
 }
-const NEUTRAL = [0x2a, 0x33, 0x46];
-const REP_PEAK = parseHex(REP_C[4]);
-const DEM_PEAK = parseHex(DEM_C[4]);
+const NEUTRAL = [0x26, 0x34, 0x45];
+const REP_PEAK = parseHex(REP_C[3]);
+const DEM_PEAK = parseHex(DEM_C[3]);
 
 export function leadColorHex(r, d, maxLead) {
   const lead = r - d;
   if (!lead || !maxLead) return toHex(NEUTRAL);
-  const t = Math.min(1, Math.pow(Math.abs(lead) / maxLead, 0.5));
+  const t = Math.min(1, Math.pow(Math.abs(lead) / maxLead, 0.48));
   const target = lead > 0 ? REP_PEAK : DEM_PEAK;
   return toHex([
     NEUTRAL[0] + (target[0] - NEUTRAL[0]) * t,
@@ -77,6 +83,6 @@ export function marginColor(dem, rep, oth = 0) {
 export function voteLeadColor(dem, rep, maxLead = 100000) {
   return leadColorHex(rep, dem, maxLead);
 }
-export const PT_RED = '#d72f30';
-export const PL_BLUE = '#3b5bdb';
+export const PT_RED = '#d64545';
+export const PL_BLUE = '#2186eb';
 export const OTH_AMBER = '#f2c14e';

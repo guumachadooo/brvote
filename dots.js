@@ -1,338 +1,411 @@
-// Renderizador WebGL de Pontos original do usavote (adaptado para PT vermelho / PL azul e até 2047 municípios)
+// dots.js — High-density voter dot layer with background pre-caching, perceptual iso-luminance (PL vs PT),
+// local density luminance modulation ("filosofia dos pontos"), and fluid mirrored 3D/2D transitions
 import * as THREE from 'three';
+import { DOT_REP_HEX, DOT_DEM_HEX, DOT_OTH_HEX } from './colors.js';
 
-const DOT_C = {
-  rep:   '#6c7dff',
-  dem:   '#ff3b3b',
-  other: '#9aa6b8',
-};
-
-const VERT = /* glsl */`
-  precision highp float;
-  attribute vec4 position;
-  uniform mat4 projectionMatrix;
-  uniform mat4 modelViewMatrix;
-  uniform sampler2D uCounty;
-  uniform float uCountyW;
-  uniform float uHasHeight;
-  uniform float uPointBase;
-  uniform float uPixelRatio;
-  varying float vParty;
-  varying float vDim;
-  void main() {
-    vec3 pos = vec3(position.x, 0.0, position.z) / 300.0;
-    float yNorm = position.y / 30000.0;
-    float wVal = floor(position.w + 0.5);
-    float party = floor(wVal / 2048.0);
-    float cix = wVal - party * 2048.0;
-    vec2 cinfo = texture2D(uCounty, vec2((cix + 0.5) / uCountyW, 0.5)).rg;
-    float colH = cinfo.r * 80.0;
-    vDim = cinfo.g;
-    pos.y = 0.22 + yNorm * colH * uHasHeight;
-    vParty = party;
-    vec4 mv = modelViewMatrix * vec4(pos, 1.0);
-    gl_Position = projectionMatrix * mv;
-    float s = uPointBase * uPixelRatio * (170.0 / max(40.0, -mv.z));
-    gl_PointSize = clamp(s, 1.25 * uPixelRatio, 6.0 * uPixelRatio);
-  }
-`;
-
-const FRAG = /* glsl */`
-  precision mediump float;
-  uniform vec3 uColorR;
-  uniform vec3 uColorD;
-  uniform vec3 uColorO;
-  uniform float uAlpha;
-  varying float vParty;
-  varying float vDim;
-  void main() {
-    vec2 p = gl_PointCoord - vec2(0.5);
-    float r2 = dot(p, p);
-    if (r2 > 0.25) discard;
-    float edge = smoothstep(0.25, 0.08, r2);
-    vec3 col = vParty < 0.5 ? uColorR : (vParty < 1.5 ? uColorD : uColorO);
-    col *= mix(1.0, 0.22, vDim);
-    float a = uAlpha * edge * mix(1.0, 0.28, vDim);
-    gl_FragColor = vec4(col, a);
-  }
-`;
+const REP_COL = new THREE.Color(DOT_REP_HEX);
+const DEM_COL = new THREE.Color(DOT_DEM_HEX);
+const OTH_COL = new THREE.Color(DOT_OTH_HEX);
 
 export function createDotLayer({ counties, group, getHeight, getPixelRatio }) {
-  const nC = counties.length;
-  const texW = Math.max(2048, nC);
-  const countyData = new Uint8Array(texW * 4);
-  for (let i = 0; i < nC; i++) countyData[i * 4] = 4;
-  const countyTex = new THREE.DataTexture(countyData, texW, 1, THREE.RGBAFormat, THREE.UnsignedByteType);
+  const dotGroup = new THREE.Group();
+  dotGroup.visible = false;
+  group.add(dotGroup);
+
+  // Subtle county boundary outlines visible in dot mode
+  const outlineGroup = new THREE.Group();
+  const lineMat = new THREE.LineBasicMaterial({
+    color: 0x263549,
+    transparent: true,
+    opacity: 0.48,
+    depthWrite: false
+  });
+  for (const c of counties) {
+    const linePts = [];
+    for (const rings of c.polys) {
+      const outer = rings[0];
+      if (!outer || outer.length < 2) continue;
+      for (let i = 0; i < outer.length; i++) {
+        const a = outer[i];
+        const b = outer[(i + 1) % outer.length];
+        linePts.push(a[0], 0.36, -a[1], b[0], 0.36, -b[1]);
+      }
+    }
+    if (linePts.length) {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(linePts, 3));
+      outlineGroup.add(new THREE.LineSegments(g, lineMat));
+    }
+  }
+  dotGroup.add(outlineGroup);
+
+  const N = Math.max(1, counties.length);
+  // R = county height (Y), G = normalized log electoral density (0..1), B = reserved, A = reserved
+  const countyTexData = new Float32Array(N * 4);
+  const countyTex = new THREE.DataTexture(countyTexData, N, 1, THREE.RGBAFormat, THREE.FloatType);
   countyTex.minFilter = THREE.NearestFilter;
   countyTex.magFilter = THREE.NearestFilter;
-  countyTex.needsUpdate = true;
 
-  const uniforms = {
-    uCounty:     { value: countyTex },
-    uCountyW:    { value: texW },
-    uHasHeight:  { value: 0 },
-    uPointBase:  { value: 2.3 },
-    uPixelRatio: { value: getPixelRatio() },
-    uColorR:     { value: new THREE.Color(DOT_C.rep) },
-    uColorD:     { value: new THREE.Color(DOT_C.dem) },
-    uColorO:     { value: new THREE.Color(DOT_C.other) },
-    uAlpha:      { value: 0.82 },
-  };
-
-  const mat = new THREE.RawShaderMaterial({
-    vertexShader: VERT,
-    fragmentShader: FRAG,
-    uniforms,
-    transparent: true,
-    depthWrite: false,
-  });
-
-  const geo = new THREE.BufferGeometry();
-  const points = new THREE.Points(geo, mat);
-  points.visible = false;
-  points.frustumCulled = false;
-  points.renderOrder = 2;
-  group.add(points);
-
-  const outlineGroup = new THREE.Group();
-  outlineGroup.visible = false;
-  outlineGroup.position.y = 0.18;
-  const baseMat = new THREE.MeshBasicMaterial({
-    color: 0x0b1924,
-    transparent: true,
-    opacity: 0.88,
-    depthWrite: false,
-  });
-  const lineMat = new THREE.LineBasicMaterial({ color: 0x1e3a4c, transparent: true, opacity: 0.78 });
-  for (const c of counties) {
-    if (c.shapes && c.shapes.length) {
-      const bgGeo = new THREE.ShapeGeometry(c.shapes);
-      bgGeo.rotateX(-Math.PI / 2);
-      const bgMesh = new THREE.Mesh(bgGeo, baseMat);
-      bgMesh.position.y = -0.06;
-      outlineGroup.add(bgMesh);
+  function syncCountyHeightsToTex() {
+    for (let i = 0; i < counties.length; i++) {
+      const c = counties[i];
+      countyTexData[i * 4] = c.currentH !== undefined ? c.currentH : (getHeight ? getHeight(c) : 0.35);
     }
-    for (const rings of c.polys) {
-      for (const r of rings) {
-        const pts = r.map(([x, y]) => new THREE.Vector3(x, 0, -y));
-        const g = new THREE.BufferGeometry().setFromPoints(pts);
-        outlineGroup.add(new THREE.Line(g, lineMat));
+    countyTex.needsUpdate = true;
+  }
+
+  function updateDensityTex(votesByCounty) {
+    if (!votesByCounty) return;
+    const logs = new Float32Array(counties.length);
+    let minL = Infinity;
+    let maxL = -Infinity;
+    for (let i = 0; i < counties.length; i++) {
+      const v = votesByCounty[i] || [0, 0, 0];
+      const tot = (v[0] || 0) + (v[1] || 0) + (v[2] || 0);
+      const area = Math.max(0.05, counties[i].area || 1);
+      const d = Math.log1p(tot / area);
+      logs[i] = d;
+      if (tot > 0) {
+        if (d < minL) minL = d;
+        if (d > maxL) maxL = d;
       }
     }
+    const span = Math.max(0.001, maxL - minL);
+    for (let i = 0; i < counties.length; i++) {
+      const norm = Math.max(0, Math.min(1, (logs[i] - minL) / span));
+      countyTexData[i * 4 + 1] = Math.pow(norm, 0.85);
+    }
+    countyTex.needsUpdate = true;
   }
-  group.add(outlineGroup);
 
-  const worker = new Worker(new URL('./dots-worker.js', import.meta.url));
-  let workerReady = false;
-  let pendingMsg = null;
-  let reqId = 0;
-  let onDone = null;
-  let lastGenArgs = null;
-  let precinctCache = null;
-  let precinctPromise = null;
-  let activePrRace = null;
-  let prFileUrl = null;
-  let prShapesUrl = null;
-
-  let baseAlpha = 0.82;
-  let targetPointBase = 2.3;
-  let fadeFactor = 0.0;
+  let curRaise = 0.0;
+  let targetRaise = 0.0;
+  let curFade = 0.0;
   let targetFade = 0.0;
+  let curScaleApp = 250;
+  let hoverIdx = -1;
 
-  function loadPrecinctsOnce() {
-    if (precinctPromise) return precinctPromise;
-    if (!prFileUrl || !prShapesUrl) return Promise.resolve(null);
-    const nameToCi = new Map(counties.map((c, i) => [c.name.toUpperCase(), i]));
-    precinctPromise = Promise.all([
-      fetch(prFileUrl).then(r => r.ok ? r.json() : null),
-      fetch(prShapesUrl).then(r => r.ok ? r.json() : null),
-    ]).then(([pr, shapes]) => {
-      if (!pr || !shapes) return null;
-      const byCounty = new Map();
-      for (const [cname, list] of Object.entries(pr.counties)) {
-        const ci = nameToCi.get(cname.toUpperCase());
-        const sList = shapes[cname];
-        if (ci == null || !sList) continue;
-        byCounty.set(ci, { list, sList });
-      }
-      precinctCache = { races: pr.races, byCounty };
-      return precinctCache;
-    }).catch(() => null);
-    return precinctPromise;
-  }
+  const mat = new THREE.ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    uniforms: {
+      uCountyTex: { value: countyTex },
+      uCountyN: { value: N },
+      uRaise: { value: 0.0 },
+      uFade: { value: 0.0 },
+      uBaseY: { value: 0.38 },
+      uHover: { value: -1.0 },
+      uPointScale: { value: 1.0 },
+      uPixelRatio: { value: getPixelRatio ? getPixelRatio() : 1.5 },
+      uRepCol: { value: new THREE.Vector3(REP_COL.r, REP_COL.g, REP_COL.b) },
+      uDemCol: { value: new THREE.Vector3(DEM_COL.r, DEM_COL.g, DEM_COL.b) },
+      uOthCol: { value: new THREE.Vector3(OTH_COL.r, OTH_COL.g, OTH_COL.b) }
+    },
+    vertexShader: `
+      attribute vec4 aPacked;
+      uniform sampler2D uCountyTex;
+      uniform float uCountyN;
+      uniform float uRaise;
+      uniform float uFade;
+      uniform float uBaseY;
+      uniform float uHover;
+      uniform float uPointScale;
+      uniform float uPixelRatio;
+      uniform vec3 uRepCol;
+      uniform vec3 uDemCol;
+      uniform vec3 uOthCol;
+      varying vec3 vColor;
+      varying float vAlpha;
 
-  function applyPrecinctRace(raceKey) {
-    if (!precinctCache || precinctCache.races[raceKey] == null) {
-      if (activePrRace !== null) {
-        worker.postMessage({ type: 'clearPrecincts' });
-        activePrRace = null;
-      }
-      return false;
-    }
-    const idx = precinctCache.races[raceKey];
-    const prs = counties.map((_, ci) => {
-      const entry = precinctCache.byCounty.get(ci);
-      if (!entry) return null;
-      const out = [];
-      const { list, sList } = entry;
-      for (let i = 0; i < list.length; i++) {
-        const polys = sList[i];
-        if (!polys || !polys.length) continue;
-        const v = list[i][3][idx];
-        const r = v ? v[0] : 0, d = v ? v[1] : 0, o = v ? v[2] : 0;
-        out.push([r, d, o, polys]);
-      }
-      return out.length ? out : null;
-    });
-    worker.postMessage({ type: 'setPrecincts', prs });
-    activePrRace = raceKey;
-    return true;
-  }
+      void main() {
+        float x = aPacked.x / 300.0;
+        float randY = aPacked.y / 30000.0;
+        float z = aPacked.z / 300.0;
+        int meta = int(aPacked.w + 0.5);
+        int party = meta / 2048;
+        int ci = meta - party * 2048;
 
-  let lastAppliedReqId = 0;
+        vec4 cData = texture2D(uCountyTex, vec2((float(ci) + 0.5) / uCountyN, 0.5));
+        float colH = max(uBaseY, cData.r);
+        float density = cData.g;
+
+        vec3 baseCol = (party == 0) ? uRepCol : ((party == 1) ? uDemCol : uOthCol);
+
+        // Filosofia dos Pontos: modulate luminance by local electoral density so sparse rural regions
+        // remain calm and dark-adapted while dense urban centers glow with crisp intensity
+        float lumMod = 0.56 + 0.54 * density;
+        vColor = clamp(baseCol * lumMod, 0.0, 1.0);
+
+        bool isHovered = (uHover < -0.5) || (abs(float(ci) - uHover) < 0.25);
+        float densityAlpha = 0.50 + 0.45 * density;
+        vAlpha = (isHovered ? densityAlpha : 0.16) * uFade;
+
+        // When uRaise > 0, dots ride inside/on top of the 3D column height!
+        float y3d = uBaseY + (0.22 + 0.78 * randY) * max(0.0, colH - uBaseY) + 0.18;
+        float y = mix(uBaseY + 0.06, y3d, uRaise);
+
+        vec4 mvPosition = modelViewMatrix * vec4(x, y, z, 1.0);
+        gl_Position = projectionMatrix * mvPosition;
+
+        float densitySize = 0.84 + 0.34 * density;
+        float distScale = 340.0 / max(20.0, -mvPosition.z);
+        float rawSize = uPointScale * densitySize * distScale * uPixelRatio * (isHovered && uHover >= 0.0 ? 1.22 : 1.0);
+        gl_PointSize = clamp(rawSize, 1.75, 9.0) * (0.45 + 0.55 * uFade);
+      }
+    `,
+    fragmentShader: `
+      varying vec3 vColor;
+      varying float vAlpha;
+      void main() {
+        vec2 p = gl_PointCoord - 0.5;
+        float d2 = dot(p, p);
+        if (d2 > 0.25) discard;
+        float alpha = smoothstep(0.25, 0.07, d2) * vAlpha;
+        gl_FragColor = vec4(vColor, alpha);
+      }
+    `
+  });
+
+  let pointsMesh = null;
+  const worker = new Worker('./dots-worker.js', { type: 'module' });
+  let workerReady = false;
+  let reqSeq = 0;
+  const pendingCallbacks = new Map();
+
+  // In-memory cache of generated packed Int16 buffers keyed by `${raceKey}:${scale}:${precinctRaceKey}`
+  const dotBufferCache = new Map();
+  let activeCacheKey = null;
+
+  let prUrl = null;
+  let prShapesUrl = null;
+  let prLoadPromise = null;
+  let prData = null;
+  let prShapes = null;
+  let lastSentPrRace = null;
+
+  worker.postMessage({
+    type: 'init',
+    counties: counties.map((c) => ({ polys: c.polys }))
+  });
+
   worker.onmessage = (e) => {
     const m = e.data;
     if (m.type === 'ready') {
       workerReady = true;
-      if (pendingMsg) {
-        const fn = pendingMsg;
-        pendingMsg = null;
-        fn();
-      }
     } else if (m.type === 'dots') {
-      if (m.reqId < lastAppliedReqId) return;
-      lastAppliedReqId = m.reqId;
-      let total = 0;
-      for (const b of m.buffers) total += b.length;
-      const merged = new Int16Array(total);
-      const starts = new Int32Array(nC);
-      const counts = new Int32Array(nC);
+      const cb = pendingCallbacks.get(m.reqId);
+      pendingCallbacks.delete(m.reqId);
+      if (!cb) return;
+
+      let totalDots = 0;
+      for (const b of m.buffers) totalDots += b.length >> 2;
+      const merged = new Int16Array(totalDots * 4);
       let off = 0;
-      for (let ci = 0; ci < nC; ci++) {
-        const b = m.buffers[ci];
-        starts[ci] = off >> 2;
-        counts[ci] = b.length >> 2;
+      for (const b of m.buffers) {
         merged.set(b, off);
         off += b.length;
       }
-      for (let i = 0, n = merged.length >> 2; i < n; i++) {
-        const j = (Math.random() * (i + 1)) | 0;
-        const a = i * 4, b = j * 4;
-        const ciA = merged[a + 3] & 2047, ciB = merged[b + 3] & 2047;
-        if (ciA === ciB) continue;
-        for (let k = 0; k < 4; k++) { const t = merged[a + k]; merged[a + k] = merged[b + k]; merged[b + k] = t; }
+
+      const payload = { merged, totalDots };
+      if (cb.cacheKey) {
+        dotBufferCache.set(cb.cacheKey, payload);
       }
-      const attr = new THREE.Int16BufferAttribute(merged, 4, false);
-      geo.setAttribute('position', attr);
-      syncHeights();
-      if (onDone) onDone({ totalDots: total >> 2, counts });
+      if (cb.apply) {
+        applyPackedDots(payload);
+      }
+      if (cb.onDone) {
+        cb.onDone({ totalDots });
+      }
     }
   };
 
-  worker.postMessage({
-    type: 'init',
-    counties: counties.map(c => ({ polys: c.polys })),
-  });
-
-  function syncHeights() {
-    for (let i = 0; i < nC; i++) {
-      countyData[i * 4] = Math.max(1, Math.min(255, Math.round((getHeight(counties[i]) / 80.0) * 255)));
+  function applyPackedDots({ merged, totalDots }) {
+    if (pointsMesh) {
+      dotGroup.remove(pointsMesh);
+      pointsMesh.geometry.dispose();
+      pointsMesh = null;
     }
-    countyTex.needsUpdate = true;
+    if (!totalDots) return;
+    const geom = new THREE.BufferGeometry();
+    const attr = new THREE.BufferAttribute(merged, 4, false);
+    geom.setAttribute('aPacked', attr);
+    // Provide a dummy position attribute bounding sphere so Three.js knows vertex count
+    geom.setAttribute('position', new THREE.BufferAttribute(new Float32Array(totalDots * 3), 3));
+    pointsMesh = new THREE.Points(geom, mat);
+    pointsMesh.frustumCulled = false;
+    pointsMesh.renderOrder = 3;
+    dotGroup.add(pointsMesh);
   }
 
-  function setHover(ci) {
-    for (let i = 0; i < nC; i++) {
-      countyData[i * 4 + 1] = (ci != null && i !== ci) ? 255 : 0;
+  function ensurePrecinctsForRace(raceKey) {
+    if (!prUrl || !prShapesUrl) return Promise.resolve();
+    if (!prLoadPromise) {
+      prLoadPromise = Promise.all([
+        fetch(prUrl).then((r) => (r.ok ? r.json() : null)),
+        fetch(prShapesUrl).then((r) => (r.ok ? r.json() : null))
+      ])
+        .then(([d, s]) => {
+          prData = d;
+          prShapes = s;
+        })
+        .catch(() => {});
     }
-    countyTex.needsUpdate = true;
-  }
-
-  function configurePrecincts(fileUrl, shapesUrl) {
-    prFileUrl = fileUrl;
-    prShapesUrl = shapesUrl;
-  }
-
-  function generate({ votesByCounty, scale, seedSalt, raceKey }, cb) {
-    onDone = cb;
-    lastGenArgs = { votesByCounty, scale, seedSalt, raceKey };
-    const dispatchToWorker = () => {
-      if (raceKey && precinctCache) applyPrecinctRace(raceKey);
-      else if (activePrRace !== null) { worker.postMessage({ type: 'clearPrecincts' }); activePrRace = null; }
-      worker.postMessage({ type: 'generate', reqId: ++reqId, votes: votesByCounty, scale, seedSalt });
-    };
-    const send = () => {
-      if (workerReady) dispatchToWorker();
-      else pendingMsg = dispatchToWorker;
-    };
-    // Gera pontos imediatamente com os polígonos estaduais/municipais e refina assim que as zonas terminarem de baixar
-    send();
-    if (raceKey && !precinctCache && prFileUrl) {
-      loadPrecinctsOnce().then(cache => {
-        if (cache && lastGenArgs && lastGenArgs.raceKey === raceKey) {
-          send();
+    return prLoadPromise.then(() => {
+      if (!prData || !prShapes || !prData.races) return;
+      const raceKeys = Array.isArray(prData.races) ? prData.races : Object.keys(prData.races);
+      const useRace = raceKeys.includes(raceKey) ? raceKey : raceKeys[0];
+      if (!useRace || useRace === lastSentPrRace) return;
+      lastSentPrRace = useRace;
+      const rIdx = !Array.isArray(prData.races) ? prData.races[useRace] : useRace;
+      const prs = counties.map((c) => {
+        const list = prData.counties[c.name] || prData.counties[c.key];
+        const sList = prShapes[c.name] || prShapes[c.key];
+        if (!list || !sList) return null;
+        const out = [];
+        for (let i = 0; i < list.length; i++) {
+          const polys = sList[i];
+          if (!polys || !polys.length) continue;
+          const v = list[i][3]?.[rIdx] || list[i][3]?.[useRace] || [1, 1, 0];
+          out.push([v[0] || 0, v[1] || 0, v[2] || 0, polys]);
         }
+        return out.length ? out : null;
       });
-    }
-  }
-  function regenerate() {
-    if (lastGenArgs) generate(lastGenArgs, onDone);
-  }
-
-  function setVisible(v, immediate = false) {
-    targetFade = v ? 1.0 : 0.0;
-    if (immediate) {
-      fadeFactor = targetFade;
-      uniforms.uAlpha.value = baseAlpha * fadeFactor;
-      baseMat.opacity = 0.88 * fadeFactor;
-      lineMat.opacity = 0.78 * fadeFactor;
-      points.visible = v;
-      outlineGroup.visible = v;
-    } else if (v) {
-      points.visible = true;
-      outlineGroup.visible = true;
-    }
-  }
-  function setRaise(v) {
-    uniforms.uHasHeight.value = v;
-  }
-  function setScaleAppearance(scale, immediate = false) {
-    if (scale <= 10)      { targetPointBase = 1.45; baseAlpha = 0.62; }
-    else if (scale <= 25) { targetPointBase = 1.75; baseAlpha = 0.72; }
-    else if (scale <= 100){ targetPointBase = 2.25; baseAlpha = 0.82; }
-    else if (scale <= 250){ targetPointBase = 2.65; baseAlpha = 0.86; }
-    else                  { targetPointBase = 3.1;  baseAlpha = 0.90; }
-    if (immediate) {
-      uniforms.uPointBase.value = targetPointBase;
-      uniforms.uAlpha.value = baseAlpha * fadeFactor;
-    }
-  }
-  function tick(dt = 0.016) {
-    const rate = Math.min(1, dt * 9.0);
-    if (Math.abs(fadeFactor - targetFade) > 0.002) {
-      fadeFactor += (targetFade - fadeFactor) * rate;
-    } else {
-      fadeFactor = targetFade;
-    }
-    if (Math.abs(uniforms.uPointBase.value - targetPointBase) > 0.005) {
-      uniforms.uPointBase.value += (targetPointBase - uniforms.uPointBase.value) * rate;
-    } else {
-      uniforms.uPointBase.value = targetPointBase;
-    }
-    uniforms.uAlpha.value = baseAlpha * fadeFactor;
-    baseMat.opacity = 0.88 * fadeFactor;
-    lineMat.opacity = 0.78 * fadeFactor;
-    const vis = fadeFactor > 0.004 || targetFade > 0.004;
-    points.visible = vis;
-    outlineGroup.visible = vis;
-  }
-  function onResize() {
-    uniforms.uPixelRatio.value = getPixelRatio();
+      worker.postMessage({ type: 'setPrecincts', prs });
+    });
   }
 
   return {
-    generate, regenerate, setVisible, setRaise, setScaleAppearance,
-    syncHeights, setHover, onResize, configurePrecincts, tick,
-    isFading: () => Math.abs(fadeFactor - targetFade) > 0.004,
+    configurePrecincts(pUrl, sUrl) {
+      prUrl = pUrl;
+      prShapesUrl = sUrl;
+    },
+
+    setScaleAppearance(scale) {
+      curScaleApp = scale;
+      // Scale point size smoothly with voter-per-dot ratio
+      const s = Math.max(0.75, Math.min(2.3, Math.pow(scale / 180, 0.28)));
+      mat.uniforms.uPointScale.value = s;
+    },
+
+    setRaise(v, immediate = false) {
+      targetRaise = Math.max(0, Math.min(1, v));
+      if (immediate) {
+        curRaise = targetRaise;
+        mat.uniforms.uRaise.value = curRaise;
+      }
+    },
+
+    setVisible(v, immediate = false) {
+      targetFade = v ? 1.0 : 0.0;
+      if (v) {
+        dotGroup.visible = true;
+      }
+      if (immediate) {
+        curFade = targetFade;
+        mat.uniforms.uFade.value = curFade;
+        dotGroup.visible = curFade > 0.005;
+      }
+    },
+
+    setHover(ci) {
+      hoverIdx = ci == null || ci < 0 ? -1 : ci;
+      mat.uniforms.uHover.value = hoverIdx;
+    },
+
+    onResize() {
+      if (getPixelRatio) {
+        mat.uniforms.uPixelRatio.value = getPixelRatio();
+      }
+    },
+
+    generate({ votesByCounty, scale, seedSalt, raceKey }, onDone) {
+      updateDensityTex(votesByCounty);
+      syncCountyHeightsToTex();
+      const cacheKey = `${raceKey || seedSalt}:${scale}`;
+
+      // Instantaneous 0ms restore from cache if already generated!
+      const cached = dotBufferCache.get(cacheKey);
+      if (cached) {
+        if (activeCacheKey !== cacheKey || !pointsMesh) {
+          activeCacheKey = cacheKey;
+          applyPackedDots(cached);
+        }
+        if (onDone) onDone({ totalDots: cached.totalDots, fromCache: true });
+        return;
+      }
+
+      ensurePrecinctsForRace(raceKey).then(() => {
+        const reqId = ++reqSeq;
+        pendingCallbacks.set(reqId, {
+          cacheKey,
+          apply: true,
+          onDone(res) {
+            activeCacheKey = cacheKey;
+            if (onDone) onDone(res);
+          }
+        });
+        worker.postMessage({
+          type: 'generate',
+          reqId,
+          votes: votesByCounty,
+          scale,
+          seedSalt
+        });
+      });
+    },
+
+    // Preload dot buffers silently in the background worker so switching to Pontos has zero lag
+    preload({ votesByCounty, scale, seedSalt, raceKey }) {
+      if (!votesByCounty) return;
+      const cacheKey = `${raceKey || seedSalt}:${scale}`;
+      if (dotBufferCache.has(cacheKey)) return;
+      updateDensityTex(votesByCounty);
+      ensurePrecinctsForRace(raceKey).then(() => {
+        if (dotBufferCache.has(cacheKey)) return;
+        const reqId = ++reqSeq;
+        pendingCallbacks.set(reqId, {
+          cacheKey,
+          apply: false,
+          onDone: null
+        });
+        worker.postMessage({
+          type: 'generate',
+          reqId,
+          votes: votesByCounty,
+          scale,
+          seedSalt
+        });
+      });
+    },
+
+    isCached(raceKey, scale, seedSalt) {
+      const cacheKey = `${raceKey || seedSalt}:${scale}`;
+      return dotBufferCache.has(cacheKey);
+    },
+
+    tick(dt) {
+      if (!dotGroup.visible && targetFade <= 0.001) return;
+
+      const speed = 5.2;
+      if (Math.abs(curFade - targetFade) > 0.002) {
+        curFade += (targetFade - curFade) * Math.min(1, dt * speed);
+        if (Math.abs(curFade - targetFade) < 0.004) curFade = targetFade;
+        mat.uniforms.uFade.value = curFade;
+        lineMat.opacity = 0.48 * curFade;
+      }
+      if (Math.abs(curRaise - targetRaise) > 0.002) {
+        curRaise += (targetRaise - curRaise) * Math.min(1, dt * 5.8);
+        if (Math.abs(curRaise - targetRaise) < 0.004) curRaise = targetRaise;
+        mat.uniforms.uRaise.value = curRaise;
+      }
+
+      if (curRaise > 0.005) {
+        syncCountyHeightsToTex();
+      }
+
+      if (curFade <= 0.005 && targetFade <= 0.005) {
+        dotGroup.visible = false;
+      }
+    }
   };
 }

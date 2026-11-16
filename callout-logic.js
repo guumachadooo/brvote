@@ -142,3 +142,20 @@ export function computeCalloutPlacements(items, sw = 800, sh = 600, topPad = 10)
   }
   return vis;
 }
+
+export function clampPinPosition(rawX, rawY, county) {
+  if (!county) return [rawX, rawY];
+  const cx = Number.isFinite(county.cx) ? county.cx : rawX;
+  const cy = Number.isFinite(county.cy) ? county.cy : rawY;
+  // Blend 65% toward the polygon's visual interior point so coastal capitals (e.g., Salvador, Recife, Vitória)
+  // sit comfortably inside the state/municipality 3D column rather than teetering on an extreme edge
+  const bx = rawX * 0.35 + cx * 0.65;
+  const by = rawY * 0.35 + cy * 0.65;
+  if (Array.isArray(county.polys)) {
+    for (const rings of county.polys) {
+      if (pointInRing(bx, by, rings[0])) return [bx, by];
+    }
+  }
+  return [cx, cy];
+}
+

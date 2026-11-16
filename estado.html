@@ -117,6 +117,7 @@
         <div class="view-row" id="viewRow">
           <div class="mode-switch">
             <button id="modeCols" class="mode-btn active" type="button">Colunas 3D</button>
+            <button id="modeCartoBtn" class="mode-btn" type="button" title="Deformar área geográfica pelo peso eleitoral">Cartograma</button>
             <button id="modeDotsBtn" class="mode-btn" type="button">Pontos</button>
             <a id="modeDots" class="mode-btn adv-only" href="voters.html" title="Abrir página dedicada de densidade de pontos com tour">Tour de Pontos ↗</a>
           </div>
@@ -129,8 +130,8 @@
           <a id="compareLink" class="compare-link" href="compare.html" title="Comparar dois mapas lado a lado movendo juntos">Comparar ⇆</a>
         </div>
         <div class="picker-row" id="picker">
-          <label class="pick"><span>Ano</span><select id="yearSelect" aria-label="Ano"></select></label>
-          <label class="pick grow"><span>Disputa</span><select id="raceSelect" aria-label="Disputa"></select></label>
+          <label class="pick"><span>Ano</span><select id="yearSelect" aria-label="Ano"><option value="2026">2026</option></select></label>
+          <label class="pick grow"><span>Disputa</span><select id="raceSelect" aria-label="Disputa"><option value="2026_pres">Presidente</option></select></label>
         </div>
         <div class="go-row" id="goRow">
           <div class="quick-search-wrap">
@@ -195,6 +196,7 @@
         <div class="pill">
           <button id="viewFlat" type="button">Plano</button>
           <button id="view3d" class="active" type="button">3D</button>
+          <button id="viewCarto" type="button" title="Cartograma eleitoral: deforma o território pelo peso dos votos">Cartograma</button>
           <button id="viewDots" type="button" title="Ver cada grupo de eleitores como um ponto no mesmo mapa">Pontos</button>
           <input id="raise" type="range" min="0" max="100" value="100" aria-label="Altura das colunas 3D" />
         </div>

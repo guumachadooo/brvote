@@ -6,6 +6,8 @@ import { createDotLayer } from './dots.js';
 import { createPlaceFinder } from './places.js';
 import { renderSourceNote } from './sourcelist.js';
 import { computeInteriorPoint } from './callout-logic.js';
+import { buildContextMap, clampCameraPan } from './context-map.js';
+import './custom-select.js';
 
 const easeQuint = t => t < 0.5 ? 16 * t * t * t * t * t : 1 - Math.pow(-2 * t + 2, 5) / 2;
 
@@ -91,6 +93,7 @@ controls.mouseButtons.LEFT = THREE.MOUSE.PAN;
 controls.mouseButtons.RIGHT = THREE.MOUSE.ROTATE;
 controls.touches.ONE = THREE.TOUCH.PAN;
 controls.touches.TWO = THREE.TOUCH.DOLLY_ROTATE;
+clampCameraPan(controls, camera, 105, true);
 
 let panMode = true;
 const dragModeBtn = document.getElementById('dragMode');
@@ -116,6 +119,18 @@ syncHint();
 
 const group = new THREE.Group();
 scene.add(group);
+
+buildContextMap({
+  uf: STATE.slug,
+  proj: ll => {
+    const p = proj(ll);
+    return p ? [p[0] - W / 2, -(p[1] - H / 2)] : [NaN, NaN];
+  },
+  BASE_H: 0.3,
+  yUp: true
+}).then(grp => {
+  scene.add(grp);
+});
 
 function ringToVec2(ring) {
   const pts = [];
@@ -346,6 +361,25 @@ document.getElementById('tourPlay').onclick = () => {
 };
 document.getElementById('tourPrev').onclick = () => { stopAuto(); goStop(stopIdx - 1); };
 document.getElementById('tourNext').onclick = () => { stopAuto(); goStop(stopIdx + 1); };
+
+const tourSectionEl = document.getElementById('tourSection');
+const tourCloseBtn = document.getElementById('tourCloseBtn');
+const tourReopenPill = document.getElementById('tourReopenPill');
+const tourReopenBtn = document.getElementById('tourReopenBtn');
+if (tourCloseBtn && tourSectionEl) {
+  tourCloseBtn.onclick = () => {
+    stopAuto();
+    tourSectionEl.hidden = true;
+    if (tourReopenPill) tourReopenPill.style.display = 'flex';
+  };
+}
+if (tourReopenBtn && tourSectionEl) {
+  tourReopenBtn.onclick = () => {
+    tourSectionEl.hidden = false;
+    if (tourReopenPill) tourReopenPill.style.display = 'none';
+  };
+}
+
 renderer.domElement.addEventListener('pointerdown', stopAuto);
 renderer.domElement.addEventListener('wheel', stopAuto, { passive: true });
 goStop(0);

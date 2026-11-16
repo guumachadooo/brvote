@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "vite --port 3000 --host 0.0.0.0",
     "build": "vite build",
-    "lint": "node --check home.js app.js state.js voters.js dots.js dots-worker.js shade-by-votes.js sources.js sitenav.js places.js cities.js colors.js busy.js precinct-columns.js story.js misread.js map3d.js",
+    "lint": "node --check home.js app.js state.js voters.js dots.js dots-worker.js shade-by-votes.js sources.js sitenav.js places.js cities.js colors.js busy.js precinct-columns.js story.js misread.js map3d.js volume.js custom-select.js context-map.js cartogram.js",
     "build:data": "node scripts/build_br_data.mjs",
     "start": "vite preview --port 3000 --host 0.0.0.0"
   },

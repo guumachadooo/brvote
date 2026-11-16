@@ -10,6 +10,10 @@ document.title = `Tour Guiado por ${STATE.name} — Como o Brasil Vota`;
 document.getElementById('brand').innerHTML = `<b>${STATE.name}</b> · Um passeio de 60 segundos pelos ${isBR ? 'estados' : 'municípios'}`;
 document.getElementById('linkMisread').href = `misread.html?uf=${STATE.slug}`;
 document.getElementById('linkExplore').href = STATE.results.href;
+const exitBtn = document.getElementById('exitTourBtn');
+const exitTop = document.getElementById('exitTourTop');
+if (exitBtn) exitBtn.href = STATE.results.href;
+if (exitTop) exitTop.href = STATE.results.href;
 
 const stage = document.getElementById('stage');
 const callouts = document.getElementById('callouts');

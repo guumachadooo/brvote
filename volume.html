@@ -1,196 +1,79 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Votos como Volume 3D — Como o Brasil Vota</title>
-<meta name="description" content="Municípios brasileiros erguidos primeiro por total de votos, depois por densidade de votos por km² (volume = votos), ou preenchidos por jarros 3D de cada partido." />
-<script type="importmap">
-{
-  "imports": {
-    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
-    "d3-geo": "https://cdn.jsdelivr.net/npm/d3-geo@3.1.1/+esm"
-  }
-}
-</script>
-<style>
-  @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
-  :root {
-    --bg: #07131a;
-    --panel: #0b1d26;
-    --line: #1b3847;
-    --text: #f2f7f5;
-    --muted: #94b2a8;
-    --accent: #10b981;
-    --accent-bright: #34d399;
-    --rep: #3b5bdb;
-    --dem: #d72f30;
-    --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
-  }
-  * { box-sizing: border-box; }
-  html, body {
-    margin: 0; height: 100%;
-    background: var(--bg); color: var(--text);
-    font: 14px/1.45 'Plus Jakarta Sans', system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-    -webkit-font-smoothing: antialiased;
-  }
-  body::before {
-    content: "";
-    display: block;
-    height: 3px;
-    width: 100%;
-    background: linear-gradient(90deg, #059669 0%, #10b981 36%, #34d399 68%, #0284c7 100%);
-    position: fixed;
-    top: 0; left: 0;
-    z-index: 9999;
-    pointer-events: none;
-  }
-  body {
-    display: flex; flex-direction: column;
-    height: 100vh; height: 100svh;
-    overflow: hidden;
-  }
-  header {
-    padding: 11px 18px;
-    background: rgba(11, 29, 38, 0.94);
-    backdrop-filter: blur(12px);
-    border-bottom: 1px solid var(--line);
-    z-index: 5;
-  }
-  .top-links {
-    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-    font-size: 12.5px; margin-bottom: 6px; padding-bottom: 6px;
-    border-bottom: 1px solid var(--line);
-  }
-  .top-links a {
-    color: var(--accent-bright); text-decoration: none; font-weight: 600;
-    white-space: nowrap;
-  }
-  .top-links a:hover { text-decoration: underline; }
-  .top-links .sep { color: var(--line); }
-  .row {
-    display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
-  }
-  h1 {
-    font-family: 'Outfit', system-ui, sans-serif;
-    font-size: 18px; margin: 0; letter-spacing: -0.015em;
-  }
-  select {
-    font: inherit; font-size: 12.5px; font-weight: 600;
-    color: var(--text); background: #112936;
-    border: 1px solid #224659; border-radius: 999px;
-    padding: 5px 12px; cursor: pointer;
-    transition: border-color 0.2s var(--ease-out);
-  }
-  select:hover { border-color: var(--accent); }
-  select option { background: var(--panel); }
-  #note {
-    margin: 7px 0 0; color: var(--muted);
-    font-size: 13px; max-width: 1020px;
-  }
-  #note b { color: var(--text); }
-  main { position: relative; flex: 1; min-height: 0; }
-  #stage { position: absolute; inset: 0; }
-  #stage canvas { display: block; width: 100%; height: 100%; touch-action: none; }
-  #loading {
-    position: absolute; inset: 0;
-    display: grid; place-items: center;
-    color: var(--muted); font-size: 14px;
-    pointer-events: none;
-  }
-  .controls {
-    position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%);
-    display: flex; flex-wrap: wrap; gap: 4px; padding: 5px;
-    background: rgba(11, 29, 38, 0.92);
-    backdrop-filter: blur(12px);
-    border: 1px solid var(--line);
-    border-radius: 999px; z-index: 4;
-    max-width: calc(100% - 20px); justify-content: center;
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
-  }
-  .controls button {
-    font: inherit; font-size: 13px; font-weight: 600;
-    color: var(--text); background: transparent;
-    border: 0; border-radius: 999px;
-    padding: 8px 15px; cursor: pointer; white-space: nowrap;
-    transition: background 0.22s var(--ease-out), color 0.22s var(--ease-out), transform 0.18s var(--ease-out);
-  }
-  .controls button:hover { background: rgba(255,255,255,0.07); }
-  .controls button[aria-pressed="true"] {
-    background: linear-gradient(135deg, #34d399 0%, #059669 100%);
-    color: #041610;
-    font-weight: 700;
-    box-shadow: 0 2px 12px rgba(16, 185, 129, 0.35);
-  }
-  .controls button:focus-visible, select:focus-visible {
-    outline: 2px solid var(--accent-bright); outline-offset: 2px;
-  }
-  .legend {
-    position: absolute; top: 12px; left: 14px;
-    display: flex; flex-direction: column; gap: 3px;
-    font-size: 11.5px; color: var(--muted);
-    background: rgba(9, 22, 30, 0.88);
-    backdrop-filter: blur(10px);
-    border: 1px solid var(--line);
-    border-radius: 10px; padding: 9px 11px;
-    pointer-events: none; z-index: 3;
-  }
-  .legend div { display: flex; gap: 2px; align-items: center; }
-  .legend i { display: inline-block; width: 16px; height: 9px; border-radius: 2px; }
-  .legend span { margin-left: 6px; }
-  #tip {
-    position: absolute; display: none; pointer-events: none;
-    background: rgba(9, 22, 30, 0.96);
-    backdrop-filter: blur(10px);
-    border: 1px solid #23485a;
-    border-radius: 10px; padding: 9px 11px; font-size: 12px;
-    min-width: 195px; max-width: min(250px, calc(100vw - 20px));
-    z-index: 6; box-shadow: 0 10px 28px rgba(0,0,0,.5);
-  }
-  #tip .n { font-weight: 700; font-size: 13px; margin-bottom: 4px; color: var(--accent-bright); }
-  #tip .r { display: flex; justify-content: space-between; gap: 10px; font-variant-numeric: tabular-nums; line-height: 1.35; }
-  #tip .m { color: var(--muted); }
-  @media (max-width: 680px) {
-    header { padding: 8px 12px; }
-    h1 { font-size: 15px; }
-    select { font-size: 12px; padding: 4px 8px; }
-    #note { font-size: 12px; line-height: 1.38; }
-    .legend { top: 8px; left: 8px; padding: 6px 8px; font-size: 10.5px; }
-    .legend i { width: 13px; height: 7px; }
-    .controls { width: calc(100% - 16px); bottom: 10px; border-radius: 16px; padding: 4px; }
-    .controls button { padding: 6px 10px; font-size: 12px; }
-  }
-</style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Como o Brasil Vota — Volume de Votos</title>
+  <link rel="stylesheet" href="style.css" />
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/",
+        "d3-geo": "https://cdn.jsdelivr.net/npm/d3-geo@3.1.1/+esm"
+      }
+    }
+  </script>
 </head>
 <body>
-<header>
-  <div class="top-links">
-    <a href="index.html">← Mapa do Brasil</a>
-    <span class="sep">·</span>
-    <a id="backStateLink" href="estado.html">← Voltar ao explorador 3D</a>
-    <span class="sep">·</span>
-    <span style="color:var(--muted)">Experimento 3D: Altura vs. Volume vs. Jarros despejando votos</span>
-  </div>
-  <div class="row">
-    <h1 id="pageTitle">Brasil: votos como volume 3D</h1>
-    <select id="ufSelect" aria-label="Escolher estado"></select>
-    <select id="race" aria-label="Escolher disputa"></select>
-  </div>
-  <p id="note">Carregando dados oficiais do TSE e malha do IBGE…</p>
-</header>
-<main>
-  <div id="stage"></div>
-  <div class="legend" id="legend" aria-hidden="true"></div>
-  <div id="tip"></div>
-  <div id="loading">Carregando malha territorial e votos…</div>
-  <div class="controls" role="group" aria-label="Como os municípios são erguidos">
-    <button type="button" id="flat" aria-pressed="true">Plano</button>
-    <button type="button" id="votes" aria-pressed="false">Altura = votos</button>
-    <button type="button" id="volume" aria-pressed="false">Volume = votos</button>
-    <button type="button" id="fill" aria-pressed="false" title="O mapa começa neutro (sem cor) e os jarros 3D despejam os votos de cada partido pintando e enchendo cada município">Despejar (Jarros 3D)</button>
-  </div>
-</main>
-<script type="module" src="volume.js"></script>
+  <script type="module" src="sitenav.js"></script>
+  <header class="Hud">
+    <div class="title-block">
+      <h1>Volume Eleitoral 3D</h1>
+      <p class="sub">Volume do prisma = total de votos · cada voto ocupa o mesmo espaço 3D</p>
+    </div>
+
+    <div class="controls">
+      <div class="seg" id="modeToggle" role="tablist" aria-label="Modo de exibição">
+        <button data-mode="flat">2D</button>
+        <button data-mode="prism" class="active">Volume</button>
+        <button data-mode="pour">Despejar</button>
+      </div>
+      <label class="pick">
+        <span>Ano</span>
+        <select id="yearSelect"></select>
+      </label>
+      <label class="pick">
+        <span>Disputa</span>
+        <select id="raceSelect"></select>
+      </label>
+    </div>
+
+    <div class="legend">
+      <div class="legend-bar">
+        <span class="swatch d"></span><span id="legD">PT / Esquerda</span>
+        <span class="swatch r"></span><span id="legR">PL / Direita</span>
+      </div>
+      <div class="totals">
+        <span id="totD" class="d">—</span>
+        <span class="sep">vs</span>
+        <span id="totR" class="r">—</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="map-area">
+    <div id="tooltip" hidden></div>
+
+    <div class="cam-Stack">
+      <button id="zoomIn" title="Aproximar">+</button>
+      <button id="zoomOut" title="Afastar">−</button>
+      <button id="camReset" title="Reiniciar visão">⟲</button>
+      <button id="camTop" title="Visão de topo 2D">2D</button>
+    </div>
+
+    <aside id="detailPanel" hidden>
+      <button id="dpClose" aria-label="Fechar">×</button>
+      <h2 id="dpName">—</h2>
+      <p id="dpSub" class="dp-sub">—</p>
+      <div id="dpWinner" class="dp-winner"></div>
+      <div id="dpRows" class="dp-rows"></div>
+      <div id="dpTotal" class="dp-total"></div>
+    </aside>
+
+    <div class="hint">Arraste para girar · Clique direito para mover · Role para zoom · Clique em um município</div>
+  </main>
+
+  <script type="module" src="volume.js"></script>
 </body>
 </html>

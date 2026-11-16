@@ -10,6 +10,9 @@ import { DEM_C, REP_C, OTHER_HEX, marginColorHex, leadColorHex, shiftColorHex } 
 import { renderSourceNote } from './sourcelist.js';
 import { withBusy } from './busy.js';
 import { computeInteriorPoint } from './callout-logic.js';
+import { buildContextMap, clampCameraPan } from './context-map.js';
+import { createCartogramWarper } from './cartogram.js';
+import './custom-select.js';
 
 const easeQuint = t => t < 0.5 ? 16 * t * t * t * t * t : 1 - Math.pow(-2 * t + 2, 5) / 2;
 
@@ -130,6 +133,7 @@ controls.mouseButtons.LEFT = THREE.MOUSE.PAN;
 controls.mouseButtons.RIGHT = THREE.MOUSE.ROTATE;
 controls.touches.ONE = THREE.TOUCH.PAN;
 controls.touches.TWO = THREE.TOUCH.DOLLY_ROTATE;
+clampCameraPan(controls, camera, 105, true);
 
 let panMode = true;
 const dragModeBtn = document.getElementById('dragMode');
@@ -180,11 +184,25 @@ scene.add(fill);
 const group = new THREE.Group();
 scene.add(group);
 
-const baseGeo = new THREE.PlaneGeometry(600, 600);
+const baseGeo = new THREE.PlaneGeometry(1200, 1200);
 baseGeo.rotateX(-Math.PI / 2);
 const baseMesh = new THREE.Mesh(baseGeo, new THREE.MeshBasicMaterial({ color: 0x07131a }));
 baseMesh.position.y = -0.05;
 scene.add(baseMesh);
+
+let contextMapGroup = null;
+buildContextMap({
+  uf: STATE.slug,
+  proj: ll => {
+    const p = proj(ll);
+    return p ? [p[0] - W / 2, -(p[1] - H / 2)] : [NaN, NaN];
+  },
+  BASE_H: 0.35,
+  yUp: true
+}).then(grp => {
+  contextMapGroup = grp;
+  scene.add(grp);
+});
 
 function ringToVec2(ring) {
   const pts = [];
@@ -281,6 +299,8 @@ for (const f of features) {
   meshToCounty.set(lower, c);
   meshToCounty.set(middle, c);
 }
+
+const cartoWarper = createCartogramWarper(counties);
 
 const MAX_H = 75;
 const BASE_H = 0.35;
@@ -897,8 +917,16 @@ function setRace(id) {
       `O pico mais alto é <b>${maxCounty.c.name}</b> (${fmt(maxCounty.tot)} votos — ${share}% de todo o estado).`;
   }
 
+  cartoWarper.prepareTargets();
   renderTables(id);
   refreshDots(id);
+  // Pre-compute dot buffer in background worker so switching to Pontos is instantaneous
+  if (viewMode !== 'dots' && r && r.counties) {
+    const votesByCounty = counties.map(c => r.counties[c.key] || r.counties[c.name] || [0, 0, 0]);
+    setTimeout(() => {
+      dotLayer.preload({ votesByCounty, scale: dotScale, seedSalt: hashStr(id), raceKey: id });
+    }, 120);
+  }
   syncUnitAvailability(id);
   if (unitMode === 'precinct') applyPrecinctUnit();
   if (places) places.refresh();
@@ -1056,12 +1084,15 @@ function syncUnitAvailability(id = activeId) {
 function applyPrecinctUnit() {
   if (!prCols) return;
   prCols.loadOnce().then(() => {
-    if (viewMode !== 'columns' || unitMode !== 'precinct') return;
+    if (viewMode === 'dots' || unitMode !== 'precinct') return;
     const info = prCols.showRace(activeId, raiseAmount, colorByLead);
     if (!info) return;
     setCountyMeshesVisible(false);
+    if (cityMarkers && cityMarkers.setUnitMode) {
+      cityMarkers.setUnitMode('precinct', prCols);
+    }
     document.getElementById('scale').textContent = isBR
-      ? `Cada uma das ${fmt(info.count)} colunas é um município brasileiro (ou região administrativa no DF); a altura reflete o total de votos da cidade`
+      ? `Cada uma das ${fmt(info.count)} colunas é um município brasileiro (com Brasília unificada no DF); a altura reflete o total de votos da cidade`
       : `Cada uma das ${fmt(info.count)} barras é uma zona eleitoral; a altura é proporcional ao total de votos da zona`;
   });
 }
@@ -1072,6 +1103,10 @@ function setUnitMode(mode) {
   document.getElementById('unitCounty').classList.toggle('active', mode === 'county');
   document.getElementById('unitPrecinct').classList.toggle('active', mode === 'precinct');
   if (mode === 'precinct') {
+    if (cartoMode) {
+      cartoMode = false;
+      cartoWarper.setTargetMix(0);
+    }
     if (aloneMode && !pinnedPrecinct) {
       aloneMode = false;
       prCols.setIsolatedItem(null);
@@ -1083,8 +1118,11 @@ function setUnitMode(mode) {
       prCols.setIsolatedItem(null);
       prCols.setVisible(false);
     }
+    if (cityMarkers && cityMarkers.setUnitMode) {
+      cityMarkers.setUnitMode('county', null);
+    }
     pinnedPrecinct = null;
-    if (viewMode === 'columns') setCountyMeshesVisible(true);
+    if (viewMode !== 'dots') setCountyMeshesVisible(true);
     document.getElementById('scale').textContent = 'A altura é proporcional ao total de votos válidos';
     applyHeights();
   }
@@ -1096,63 +1134,132 @@ document.getElementById('unitCounty').onclick = () => setUnitMode('county');
 document.getElementById('unitPrecinct').onclick = () => setUnitMode('precinct');
 
 let modeFadeTimer = null;
-function setViewMode(mode, immediate = false) {
-  const prevMode = viewMode;
-  viewMode = mode;
-  const isDots = mode === 'dots';
-  document.getElementById('modeCols')?.classList.toggle('active', !isDots);
+let modeStageTimer = null;
+let cartoMode = false;
+
+function syncModeButtonsUI() {
+  const isDots = viewMode === 'dots';
+  const isFlat = !isDots && !cartoMode && raiseAmount < 0.05;
+  const is3d = !isDots && !cartoMode && raiseAmount >= 0.05;
+  document.getElementById('modeCols')?.classList.toggle('active', !isDots && !cartoMode);
+  document.getElementById('modeCartoBtn')?.classList.toggle('active', cartoMode && !isDots);
   document.getElementById('modeDotsBtn')?.classList.toggle('active', isDots);
   document.getElementById('viewDots')?.classList.toggle('active', isDots);
-  document.getElementById('viewFlat')?.classList.toggle('active', !isDots && raiseAmount < 0.05);
-  document.getElementById('view3d')?.classList.toggle('active', !isDots && raiseAmount >= 0.05);
+  document.getElementById('viewCarto')?.classList.toggle('active', cartoMode && !isDots);
+  document.getElementById('viewFlat')?.classList.toggle('active', isFlat);
+  document.getElementById('view3d')?.classList.toggle('active', is3d);
+}
 
-  if (modeFadeTimer) {
-    clearTimeout(modeFadeTimer);
-    modeFadeTimer = null;
+function setViewMode(mode, immediate = false) {
+  const prevMode = viewMode;
+  const wasCarto = cartoMode;
+  if (mode === 'carto') {
+    cartoMode = true;
+    viewMode = 'columns';
+    if (unitMode === 'precinct') setUnitMode('county');
+  } else {
+    cartoMode = false;
+    viewMode = mode;
   }
 
+  if (modeFadeTimer) { clearTimeout(modeFadeTimer); modeFadeTimer = null; }
+  if (modeStageTimer) { clearTimeout(modeStageTimer); modeStageTimer = null; }
+
+  cartoWarper.setTargetMix(cartoMode ? 1.0 : 0.0, immediate);
+  syncModeButtonsUI();
+
+  const isDots = viewMode === 'dots';
   const showPrecincts = !isDots && unitMode === 'precinct';
+
   if (isDots) {
-    dotLayer.setRaise(0);
+    // Mirrored transition:
+    // - From 3D (raiseAmount >= 0.05): Dots fade in AT 3D column height first, then compress down together with columns!
+    // - From Plano (raiseAmount < 0.05): Smooth cross-fade at ground level without hard cut!
+    const from3D = !immediate && prevMode === 'columns' && raiseAmount >= 0.05;
+    dotLayer.setRaise(from3D ? raiseAmount : 0, true);
     dotLayer.setVisible(true, immediate);
     refreshDots();
+
     if (!immediate && prevMode === 'columns') {
-      // Abaixa suavemente as colunas 3D enquanto os pontos surgem gradualmente
-      for (const c of counties) {
-        c.fromBot = c.lower.scale.y || 0.01;
-        c.fromMid = c.middle.visible ? c.middle.scale.y : 0;
-        c.fromTop = c.mesh.scale.y || 0.29;
-        c.toBot = 0.01;
-        c.toMid = 0;
-        c.toTop = BASE_H - 0.01;
+      if (from3D) {
+        // Phase 1: Let dots materialize on the 3D columns for 160ms, then compress columns + dots to ground together
+        modeStageTimer = setTimeout(() => {
+          if (viewMode !== 'dots') return;
+          dotLayer.setRaise(0, false);
+          for (const c of counties) {
+            c.fromBot = c.lower.scale.y || 0.01;
+            c.fromMid = c.middle.visible ? c.middle.scale.y : 0;
+            c.fromTop = c.mesh.scale.y || 0.29;
+            c.toBot = 0.01;
+            c.toMid = 0;
+            c.toTop = BASE_H - 0.01;
+          }
+          animStart = performance.now();
+          if (prCols && unitMode === 'precinct') prCols.setRaise(0, true);
+        }, 160);
+        modeFadeTimer = setTimeout(() => {
+          if (viewMode === 'dots') {
+            setCountyMeshesVisible(false);
+            if (prCols) prCols.setVisible(false);
+          }
+        }, 680);
+      } else {
+        // Plano -> Pontos: smooth 460ms cross-fade before hiding flat county meshes
+        modeFadeTimer = setTimeout(() => {
+          if (viewMode === 'dots') {
+            setCountyMeshesVisible(false);
+            if (prCols) prCols.setVisible(false);
+          }
+        }, 460);
       }
-      animStart = performance.now();
-      if (prCols && unitMode === 'precinct') prCols.setRaise(0, true);
-      modeFadeTimer = setTimeout(() => {
-        if (viewMode === 'dots') {
-          setCountyMeshesVisible(false);
-          if (prCols) prCols.setVisible(false);
-        }
-      }, 480);
     } else {
       setCountyMeshesVisible(false);
       if (prCols) prCols.setVisible(false);
     }
   } else {
-    dotLayer.setVisible(false, immediate);
     setCountyMeshesVisible(!showPrecincts);
     if (prCols) {
       if (showPrecincts) applyPrecinctUnit();
       else prCols.setVisible(false);
     }
-    applyHeights();
+
+    if (!immediate && prevMode === 'dots') {
+      const to3D = raiseAmount >= 0.05;
+      if (to3D) {
+        // Pontos -> 3D (Mirrored!): Columns start at flat ground and rise UP together with dots,
+        // then dots smoothly fade out once at 3D height!
+        for (const c of counties) {
+          c.lower.scale.y = 0.01;
+          c.middle.scale.y = 0;
+          c.mesh.position.y = 0.01;
+          c.mesh.scale.y = BASE_H - 0.01;
+        }
+        applyHeights();
+        dotLayer.setRaise(raiseAmount, false);
+        modeFadeTimer = setTimeout(() => {
+          if (viewMode !== 'dots') {
+            dotLayer.setVisible(false, false);
+          }
+        }, 320);
+      } else {
+        // Pontos -> Plano: Smooth cross-fade at ground level
+        applyHeights();
+        dotLayer.setRaise(0, true);
+        dotLayer.setVisible(false, false);
+      }
+    } else {
+      dotLayer.setVisible(false, immediate);
+      applyHeights();
+    }
   }
 
   if (cityMarkers) cityMarkers.refreshHeights();
   document.getElementById('dotScalePill').style.display = isDots ? 'flex' : 'none';
   document.getElementById('colorPill').style.display = isDots ? 'none' : 'flex';
   document.getElementById('scale').textContent = isDots
-    ? `Cada ponto representa ${fmt(dotScale)} eleitores daquele partido, posicionados dentro de cada zona eleitoral`
+    ? `Cada ponto representa ${fmt(dotScale)} eleitores daquele partido, com brilho modulado pela densidade eleitoral local`
+    : cartoMode
+    ? 'Cartograma eleitoral: os municípios mais populosos se expandem proporcionalmente ao seu peso no total de votos'
     : 'A altura é proporcional ao total de votos válidos';
   syncTurnVisibility();
   syncUnitAvailability();
@@ -1161,7 +1268,21 @@ function setViewMode(mode, immediate = false) {
 }
 
 const modeColsBtn = document.getElementById('modeCols');
-if (modeColsBtn) modeColsBtn.onclick = () => setViewMode('columns');
+if (modeColsBtn) modeColsBtn.onclick = () => {
+  if (raiseAmount < 0.05) raiseAmount = 1;
+  document.getElementById('raise').value = String(Math.round(raiseAmount * 100));
+  setViewMode('columns');
+};
+const modeCartoBtn = document.getElementById('modeCartoBtn');
+if (modeCartoBtn) modeCartoBtn.onclick = () => {
+  setViewMode('carto');
+  animateCameraTo(new THREE.Vector3(0, 265, 95), new THREE.Vector3(0, 0, 2), 780);
+};
+const viewCartoBtn = document.getElementById('viewCarto');
+if (viewCartoBtn) viewCartoBtn.onclick = () => {
+  setViewMode('carto');
+  animateCameraTo(new THREE.Vector3(0, 265, 95), new THREE.Vector3(0, 0, 2), 780);
+};
 const modeDotsBtn = document.getElementById('modeDotsBtn');
 if (modeDotsBtn) modeDotsBtn.onclick = () => setViewMode('dots');
 const viewDotsBtn = document.getElementById('viewDots');
@@ -1188,27 +1309,32 @@ function syncTurnVisibility() {
   turnWrap.style.display = (viewMode === 'columns' && raiseAmount > 0.05) ? 'flex' : 'none';
 }
 
-function setRaise(v) {
-  if (viewMode === 'dots') setViewMode('columns');
+function setRaise(v, keepCarto = false) {
   raiseAmount = v;
   raiseSlider.value = Math.round(v * 100);
-  btnFlat.classList.toggle('active', viewMode !== 'dots' && v < 0.05);
-  btn3d.classList.toggle('active', viewMode !== 'dots' && v >= 0.05);
-  document.getElementById('viewDots')?.classList.remove('active');
-  if (v < 0.05) aloneMode = false;
-  applyHeights();
-  dotLayer.setRaise(v);
-  syncTurnVisibility();
-  syncAloneButtons();
-  syncUrl();
+  if (!keepCarto && cartoMode) {
+    cartoMode = false;
+    cartoWarper.setTargetMix(0);
+  }
+  if (viewMode === 'dots') {
+    setViewMode('columns');
+  } else {
+    syncModeButtonsUI();
+    if (v < 0.05) aloneMode = false;
+    applyHeights();
+    dotLayer.setRaise(v);
+    syncTurnVisibility();
+    syncAloneButtons();
+    syncUrl();
+  }
 }
-raiseSlider.oninput = e => setRaise(+e.target.value / 100);
+raiseSlider.oninput = e => setRaise(+e.target.value / 100, cartoMode);
 btnFlat.onclick = () => {
-  setRaise(0);
+  setRaise(0, false);
   animateCameraTo(new THREE.Vector3(0, 290, 0.01), new THREE.Vector3(0, 0, 0), 780);
 };
 btn3d.onclick = () => {
-  setRaise(1);
+  setRaise(1, false);
   animateCameraTo(new THREE.Vector3(0, 215, 225), new THREE.Vector3(0, 0, 6), 780);
 };
 if (turnSlider) {
@@ -1885,27 +2011,47 @@ if (filterWinnerSel) {
   };
 }
 const mapThemeSel = document.getElementById('mapThemeSelect');
+function applyThreeTheme(val) {
+  document.body.classList.remove('theme-contrast', 'theme-light');
+  if (val === 'contrast') {
+    document.body.classList.add('theme-contrast');
+    scene.background = new THREE.Color(0x020408);
+    baseMesh.material.color.setHex(0x020408);
+    edgeMat.color.setHex(0x24344d);
+  } else if (val === 'light') {
+    document.body.classList.add('theme-light');
+    scene.background = new THREE.Color(0xf6f3ec);
+    // Match baseMesh exactly to scene.background so there is NO dark rectangle around the map!
+    baseMesh.material.color.setHex(0xf6f3ec);
+    edgeMat.color.setHex(0x8c8577);
+  } else {
+    scene.background = new THREE.Color(0x07131a);
+    baseMesh.material.color.setHex(0x07131a);
+    edgeMat.color.setHex(0x162b38);
+  }
+  if (contextMapGroup?.userData?.updateTheme) {
+    contextMapGroup.userData.updateTheme(val);
+  }
+}
 if (mapThemeSel) {
   mapThemeSel.onchange = () => {
     const val = mapThemeSel.value;
-    document.body.classList.remove('theme-contrast', 'theme-light');
-    if (val === 'contrast') {
-      document.body.classList.add('theme-contrast');
-      scene.background = new THREE.Color(0x03070b);
-      baseMesh.material.color.setHex(0x060d14);
-      edgeMat.color.setHex(0x1e2c44);
-    } else if (val === 'light') {
-      document.body.classList.add('theme-light');
-      scene.background = new THREE.Color(0xeef4f0);
-      baseMesh.material.color.setHex(0xdce6df);
-      edgeMat.color.setHex(0x8da399);
-    } else {
-      scene.background = new THREE.Color(0x07131a);
-      baseMesh.material.color.setHex(0x0a1922);
-      edgeMat.color.setHex(0x162b38);
-    }
+    if (window.setBrVoteTheme) window.setBrVoteTheme(val);
+    else applyThreeTheme(val);
   };
 }
+window.addEventListener('themechange', e => {
+  const th = (e.detail && e.detail.theme) || 'dark';
+  if (mapThemeSel && mapThemeSel.value !== th) mapThemeSel.value = th;
+  applyThreeTheme(th);
+});
+try {
+  const savedTheme = localStorage.getItem('brvote_theme');
+  if (savedTheme && savedTheme !== 'dark') {
+    if (mapThemeSel) mapThemeSel.value = savedTheme;
+    applyThreeTheme(savedTheme);
+  }
+} catch {}
 
 // Sincronização de câmera com compare.html via postMessage (PR #13)
 let suppressCamBroadcast = false;
@@ -1933,6 +2079,14 @@ if (window.parent && window.parent !== window) {
     if (d.type === 'forceResize') {
       resize();
       renderer.render(scene, camera);
+      return;
+    }
+    if (d.type === 'selectMun' && places) {
+      if (d.mun) {
+        places.selectCountyByName(d.mun, true);
+      } else {
+        places.clearAll();
+      }
       return;
     }
     if (d.type !== 'setCam') return;
@@ -1970,6 +2124,9 @@ function tick(now) {
     c.currentH = bot + mid + top;
   }
   if (prCols) prCols.tick(now);
+  if (cartoWarper.tick(dt) && cityMarkers && cityMarkers.applyCartogramOffset) {
+    cityMarkers.applyCartogramOffset(cartoWarper.evalDisplacement, cartoWarper.getMix());
+  }
   dotLayer.tick(dt);
   if (cityMarkers) cityMarkers.refreshHeights();
   if (camAnim) {

@@ -1,5 +1,6 @@
-// Barra superior de navegação original do usavote com Brasil Inteiro + todas as 27 UFs + Alternador de Layout (Modo Simples vs. Avançado)
+// Barra superior de navegação com Brasil Inteiro + 27 UFs + Alternador de Layout + Alternador Global de Tema Visual
 import { STATES, STATE } from './state.js';
+import { initCustomSelects } from './custom-select.js';
 
 function checkIsFramed() {
   if (/^pane[AB]$|^frame[AB]$/i.test(window.name || '')) return true;
@@ -38,6 +39,10 @@ const savedMode = (() => {
   try { return localStorage.getItem('brvote_ui_mode') || 'simple'; } catch { return 'simple'; }
 })();
 
+const savedTheme = (() => {
+  try { return localStorage.getItem('brvote_theme') || 'dark'; } catch { return 'dark'; }
+})();
+
 function applyUiMode(mode) {
   const m = mode === 'advanced' ? 'advanced' : 'simple';
   document.body.classList.toggle('ui-simple', m === 'simple');
@@ -53,10 +58,31 @@ function applyUiMode(mode) {
 }
 window.setBrVoteUiMode = applyUiMode;
 
+function applyTheme(theme) {
+  const t = (theme === 'light' || theme === 'contrast') ? theme : 'dark';
+  document.documentElement.classList.toggle('theme-light', t === 'light');
+  document.documentElement.classList.toggle('theme-contrast', t === 'contrast');
+  document.body.classList.toggle('theme-light', t === 'light');
+  document.body.classList.toggle('theme-contrast', t === 'contrast');
+  try { localStorage.setItem('brvote_theme', t); } catch {}
+  document.querySelectorAll('#navThemeSelect, #mapThemeSelect, #homeThemeSelect').forEach(sel => {
+    if (sel && sel.value !== t) sel.value = t;
+  });
+  window.dispatchEvent(new CustomEvent('themechange', { detail: { theme: t } }));
+}
+window.setBrVoteTheme = applyTheme;
+
 bar.innerHTML =
   `<a class="home-link" href="index.html">← Mapa do Brasil</a>` +
   `<span class="nav-sep">·</span>` +
-  `<label class="state-Jump"><span>Recorte</span><select aria-label="Pular para estado ou Brasil inteiro">${options}</select></label>` +
+  `<label class="state-Jump"><span>Recorte</span><select id="navStateSelect" aria-label="Pular para estado ou Brasil inteiro">${options}</select></label>` +
+  `<label class="state-Jump nav-theme-pick"><span>Tema</span>` +
+    `<select id="navThemeSelect" aria-label="Escolher tema visual do site">` +
+      `<option value="dark">Brasil Noite</option>` +
+      `<option value="light">Claro Editorial</option>` +
+      `<option value="contrast">Alto Contraste</option>` +
+    `</select>` +
+  `</label>` +
   `<div class="ui-mode-switch" role="group" aria-label="Nível de detalhe da interface" title="Escolha entre o layout Simples (intuitivo, sem excesso de botões) ou Avançado (com filtros e personalização completa)">` +
     `<span class="ui-mode-lbl">Layout:</span>` +
     `<button type="button" class="ui-mode-btn" data-uimode="simple">Simples</button>` +
@@ -65,21 +91,34 @@ bar.innerHTML =
   `<a class="volume-top" href="volume.html?uf=${STATE.slug}" title="Ver experimento Votos como Volume 3D e Jarros despejando votos">Volume &amp; Jarros 3D →</a>` +
   `<a class="why-top" href="why.html">Por que mapear votos assim? →</a>`;
 
-const sel = bar.querySelector('select');
+const sel = bar.querySelector('#navStateSelect');
 sel.onchange = () => {
   const target = ready.find(s => s.slug === sel.value);
   if (!target) return;
+  if (/volume\.html$/.test(location.pathname)) {
+    location.href = `volume.html?uf=${target.slug}`;
+    return;
+  }
   const onVoters = /voters\.html$/.test(location.pathname);
   location.href = (onVoters && target.dots) ? target.dots : target.results.href;
 };
+
+const themeSel = bar.querySelector('#navThemeSelect');
+themeSel.value = savedTheme;
+themeSel.onchange = () => applyTheme(themeSel.value);
 
 bar.querySelectorAll('.ui-mode-btn').forEach(btn => {
   btn.onclick = () => applyUiMode(btn.dataset.uimode);
 });
 
-const host = document.getElementById('races');
-if (host && !isFramed) host.prepend(bar);
+const host = document.getElementById('races') || document.querySelector('header.Hud');
+if (!isFramed) {
+  if (host) host.prepend(bar);
+  else document.body.prepend(bar);
+}
 
-// Verifica se a URL pediu modo avançado ou aplica o modo salvo
+initCustomSelects(bar);
+
 const urlMode = new URLSearchParams(location.search).get('layout');
 applyUiMode(urlMode === 'advanced' || urlMode === 'simple' ? urlMode : savedMode);
+applyTheme(savedTheme);

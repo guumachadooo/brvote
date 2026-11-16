@@ -143,6 +143,12 @@
         <span>Recorte</span>
         <select id="cmpStateSelect" aria-label="Escolher estado ou Brasil"></select>
       </label>
+      <label style="display:inline-flex;align-items:center;gap:5px;color:var(--muted)">
+        <span id="cmpMunLabel">Município</span>
+        <select id="cmpMunSelect" aria-label="Escolher município para destacar nos dois mapas">
+          <option value="">Todos os municípios…</option>
+        </select>
+      </label>
       <label class="cmp-sync" title="Quando ativado, mover ou aproximar qualquer um dos mapas move o outro junto para o mesmo lugar">
         <input type="checkbox" id="syncCam" checked />
         Mover juntos
@@ -169,6 +175,15 @@
 
 <script type="module">
 import { STATES, STATE } from './state.js';
+import { initCustomSelects } from './custom-select.js';
+
+try {
+  const savedTheme = localStorage.getItem('brvote_theme');
+  if (savedTheme === 'light' || savedTheme === 'contrast') {
+    document.documentElement.classList.add(`theme-${savedTheme}`);
+    document.body.classList.add(`theme-${savedTheme}`);
+  }
+} catch {}
 
 const params = new URLSearchParams(location.search);
 let currentUf = (params.get('uf') || STATE.slug || 'sp').toLowerCase();
@@ -187,6 +202,29 @@ sel.innerHTML = sorted.map(s => {
   const lbl = s.slug === 'br' ? 'Brasil (Nacional)' : `${s.name} (${s.code})`;
   return `<option value="${s.slug}" ${s.slug === currentUf ? 'selected' : ''}>${lbl}</option>`;
 }).join('');
+
+const munSel = document.getElementById('cmpMunSelect');
+const munLbl = document.getElementById('cmpMunLabel');
+
+async function loadMunicipalitiesForUf(uf) {
+  if (munLbl) munLbl.textContent = uf === 'br' ? 'Estado' : 'Município';
+  const allTxt = uf === 'br' ? 'Todos os estados…' : 'Todos os municípios…';
+  try {
+    const res = await fetch(`data/${uf}/counties.json`);
+    const geo = await res.json();
+    const names = (geo.features || [])
+      .map(f => f.properties?.name)
+      .filter(Boolean)
+      .sort((a, b) => a.localeCompare(b, 'pt-BR'));
+    munSel.innerHTML = `<option value="">${allTxt}</option>` +
+      names.map(n => `<option value="${n.replace(/"/g, '&quot;')}" ${n.toLowerCase() === currentMun.toLowerCase() ? 'selected' : ''}>${n}</option>`).join('');
+  } catch {
+    munSel.innerHTML = `<option value="">${allTxt}</option>`;
+  }
+}
+
+initCustomSelects(document);
+loadMunicipalitiesForUf(currentUf);
 
 const frameA = document.getElementById('frameA');
 const frameB = document.getElementById('frameB');
@@ -284,7 +322,21 @@ sel.onchange = () => {
   currentMun = '';
   params.delete('a');
   params.delete('b');
+  loadMunicipalitiesForUf(currentUf);
   updateFrames();
+};
+
+munSel.onchange = () => {
+  currentMun = munSel.value;
+  panes.forEach(f => {
+    try {
+      if (f.contentWindow) f.contentWindow.postMessage({ type: 'selectMun', mun: currentMun }, '*');
+    } catch {}
+  });
+  const nextParams = new URLSearchParams(location.search);
+  if (currentMun) nextParams.set('mun', currentMun);
+  else nextParams.delete('mun');
+  history.replaceState(null, '', 'compare.html?' + nextParams.toString());
 };
 
 document.querySelectorAll('#cmpPresets button').forEach(btn => {
