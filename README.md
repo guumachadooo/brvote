@@ -1,6 +1,6 @@
 # Como o Brasil Vota (`brasil-vote-3d`)
 
-Adaptação fiel do projeto **How America Votes** (`usavote`) para as **Eleições Gerais Brasileiras de 2026, 2022 e 2018**, preservando 100% do design original, das interações em 3D e das narrativas visuais (*Guided Flights*), integrada com a **malha territorial oficial do IBGE** para todas as **27 Unidades da Federação (5.570 municípios)**.
+Adaptação do projeto **How America Votes** (`usavote`) para as **Eleições Gerais Brasileiras de 2026, 2022 e 2018**.
 
 ## Funcionalidades
 
