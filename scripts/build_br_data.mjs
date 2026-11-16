@@ -83,6 +83,19 @@ function ensureD3Ring(ring, isHole = false) {
   return closed;
 }
 
+function pointInRing2D(pt, ring) {
+  let inside = false;
+  const x = pt[0], y = pt[1];
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const xi = ring[i][0], yi = ring[i][1];
+    const xj = ring[j][0], yj = ring[j][1];
+    if (((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / ((yj - yi) || 1e-12) + xi)) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
 function cleanGeometry(geom, tol = 0.0045, ufCode = '') {
   const sqTol = tol * tol;
   const shiftPt = ([lon, lat]) => {
@@ -92,13 +105,37 @@ function cleanGeometry(geom, tol = 0.0045, ufCode = '') {
   };
 
   if (geom.type === 'Polygon') {
-    const rings = geom.coordinates.map((r, i) => ensureD3Ring(simplifyDP(r.map(shiftPt), sqTol), i > 0));
+    const rawRings = geom.coordinates
+      .map(r => simplifyDP(r.map(shiftPt), sqTol))
+      .filter(r => r.length >= 4 && Math.abs(signedRingArea(r)) > 1e-7);
+    if (rawRings.length > 1) {
+      rawRings.sort((a, b) => Math.abs(signedRingArea(b)) - Math.abs(signedRingArea(a)));
+      const mainRing = ensureD3Ring(rawRings[0], false);
+      const holes = [];
+      const islands = [];
+      for (let i = 1; i < rawRings.length; i++) {
+        if (pointInRing2D(rawRings[i][0], mainRing)) {
+          holes.push(ensureD3Ring(rawRings[i], true));
+        } else {
+          islands.push([ensureD3Ring(rawRings[i], false)]);
+        }
+      }
+      if (islands.length > 0) {
+        return {
+          type: 'MultiPolygon',
+          coordinates: [[mainRing, ...holes], ...islands]
+        };
+      }
+      return { type: 'Polygon', coordinates: [mainRing, ...holes] };
+    }
+    const rings = rawRings.map((r, i) => ensureD3Ring(r, i > 0));
     return { type: 'Polygon', coordinates: rings };
   }
   if (geom.type === 'MultiPolygon') {
     const polys = geom.coordinates
       .map(poly => poly.map((r, i) => ensureD3Ring(simplifyDP(r.map(shiftPt), sqTol), i > 0)))
-      .filter(poly => poly[0].length >= 4 && Math.abs(signedRingArea(poly[0])) > 1e-7);
+      .filter(poly => poly[0].length >= 4 && Math.abs(signedRingArea(poly[0])) > 1e-7)
+      .sort((a, b) => Math.abs(signedRingArea(b[0])) - Math.abs(signedRingArea(a[0])));
     if (polys.length === 1) return { type: 'Polygon', coordinates: polys[0] };
     return { type: 'MultiPolygon', coordinates: polys };
   }

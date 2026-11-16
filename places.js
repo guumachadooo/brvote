@@ -15,22 +15,29 @@ export function createPlaceFinder({
   const infoEl = document.getElementById('placeInfo');
 
   const sortedCounties = [...counties].sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
-  goCounty.innerHTML = `<option value="">Ir para município (${counties.length})…</option>` +
+  const unitLabel = counties.length === 27 ? 'Estado' : 'Município';
+  goCounty.innerHTML = `<option value="">${unitLabel} (${counties.length})…</option>` +
     sortedCounties.map(c => `<option value="${c.name}">${c.name}</option>`).join('');
 
   const byUpper = new Map(counties.map(c => [c.name.toUpperCase(), c]));
+  const cityByCountyUpper = new Map();
 
   let cities = [];
   if (cityUrl) {
     fetch(cityUrl).then(r => r.json()).then(list => {
+      for (const c of list) {
+        if (c.county) cityByCountyUpper.set(c.county.toUpperCase(), c);
+        if (c.name) cityByCountyUpper.set(c.name.toUpperCase(), c);
+      }
       cities = list.filter(c => {
         const p = proj([c.lon, c.lat]);
         return p && isFinite(p[0]) && isFinite(p[1]);
-      });
-      goCity.innerHTML = `<option value="">Ir para cidade (${cities.length})…</option>` +
+      }).slice(0, 80);
+      goCity.innerHTML = `<option value="">Cidade (${cities.length} maiores)…</option>` +
         cities.map((c, i) =>
           `<option value="${i}">${c.name} (${fmt(c.pop)})</option>`
         ).join('');
+      if (activeCounty) notifyCountyChange(activeCounty);
     }).catch(() => { goCity.style.display = 'none'; });
   } else {
     goCity.style.display = 'none';
@@ -42,6 +49,7 @@ export function createPlaceFinder({
     fetch(precinctUrl).then(r => r.json()).then(d => {
       prData = d;
       if (goCounty.value) populatePrecincts(goCounty.value);
+      if (activeCounty) notifyCountyChange(activeCounty);
     }).catch(() => {});
   }
   if (precinctShapesUrl) {
@@ -53,13 +61,13 @@ export function createPlaceFinder({
   pinGroup.renderOrder = 5;
   const stemGeo = new THREE.CylinderGeometry(0.18, 0.18, 1, 10);
   stemGeo.translate(0, 0.5, 0);
-  const stemMat = new THREE.MeshBasicMaterial({ color: 0xf2c14e });
+  const stemMat = new THREE.MeshBasicMaterial({ color: 0x34d399 });
   const stem = new THREE.Mesh(stemGeo, stemMat);
   const headGeo = new THREE.SphereGeometry(0.95, 16, 12);
   const head = new THREE.Mesh(headGeo, stemMat);
   const ringGeo = new THREE.RingGeometry(1.4, 2.1, 32);
   ringGeo.rotateX(-Math.PI / 2);
-  const ringMat = new THREE.MeshBasicMaterial({ color: 0xf2c14e, side: THREE.DoubleSide });
+  const ringMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8, side: THREE.DoubleSide });
   const ring = new THREE.Mesh(ringGeo, ringMat);
   ring.position.y = 0.25;
   pinGroup.add(stem, head, ring);
@@ -80,10 +88,10 @@ export function createPlaceFinder({
   prHighlight.visible = false;
   prHighlight.renderOrder = 6;
   const prFillMat = new THREE.MeshBasicMaterial({
-    color: 0xf2c14e, transparent: true, opacity: 0.32,
+    color: 0x10b981, transparent: true, opacity: 0.32,
     side: THREE.DoubleSide, depthTest: false,
   });
-  const prLineMat = new THREE.LineBasicMaterial({ color: 0xf2c14e, depthTest: false });
+  const prLineMat = new THREE.LineBasicMaterial({ color: 0x34d399, depthTest: false });
   group.add(prHighlight);
 
   function clearPrecinctHighlight() {
@@ -126,18 +134,21 @@ export function createPlaceFinder({
   }
 
   let anim = null;
-  function flyTo(tx, tz, dist, heightRatio = 0.62) {
+  function flyTo(tx, tz, dist, heightRatio = 0.68) {
     onCameraChange();
     const fromTarget = controls.target.clone();
     const fromPos = camera.position.clone();
     const toTarget = new THREE.Vector3(tx, 0, tz);
-    const toPos = new THREE.Vector3(tx, dist * heightRatio, tz + dist * 0.78);
+    const isFlatView = Math.hypot(fromPos.x - fromTarget.x, fromPos.z - fromTarget.z) < 6;
+    const toPos = isFlatView
+      ? new THREE.Vector3(tx, Math.max(95, dist * 1.15), tz + 0.01)
+      : new THREE.Vector3(tx, dist * heightRatio, tz + dist * 0.82);
     const t0 = performance.now();
-    const dur = 650;
+    const dur = 860;
     if (anim) cancelAnimationFrame(anim);
     function step(now) {
       const u = Math.min(1, (now - t0) / dur);
-      const e = 1 - Math.pow(1 - u, 3);
+      const e = u < 0.5 ? 16 * u * u * u * u * u : 1 - Math.pow(-2 * u + 2, 5) / 2;
       controls.target.lerpVectors(fromTarget, toTarget, e);
       camera.position.lerpVectors(fromPos, toPos, e);
       controls.update();
@@ -152,20 +163,45 @@ export function createPlaceFinder({
     const list = prData && key && prData.counties[key];
     if (!list || !list.length) {
       goPrecinct.disabled = true;
-      goPrecinct.innerHTML = `<option value="">Zona Eleitoral (escolha um município)…</option>`;
+      goPrecinct.innerHTML = `<option value="">Zona eleitoral…</option>`;
       return;
     }
     goPrecinct.disabled = false;
     goPrecinct.innerHTML =
-      `<option value="">Todas as ${list.length} zonas eleitorais em ${countyName}…</option>` +
+      `<option value="">Zonas em ${countyName} (${list.length})…</option>` +
       list.map((p, i) =>
-        `<option value="${i}">Zona ${p[0]} (${fmt(p[1])} eleitores)</option>`
+        `<option value="${i}">${p[0]} (${fmt(p[1])} eleitores)</option>`
       ).join('');
   }
 
   let activeCity = null;
   let activeCounty = null;
   let activePrecinctIdx = null;
+
+  function getCountyMeta(c) {
+    if (!c) return { pop: null, aptos: 0, zonesCount: 0, zones: [] };
+    const key = c.name.toUpperCase();
+    const cityEntry = (activeCity && activeCity.county && activeCity.county.toUpperCase() === key)
+      ? activeCity
+      : cityByCountyUpper.get(key);
+    const zList = (prData && prData.counties && prData.counties[key]) || [];
+    let aptos = 0;
+    for (const z of zList) aptos += (z[1] || 0);
+    return {
+      pop: cityEntry ? cityEntry.pop : null,
+      aptos,
+      zonesCount: zList.length,
+      zones: zList,
+    };
+  }
+
+  function notifyCountyChange(c) {
+    if (!c) {
+      onClearCounty();
+    } else {
+      onSelectCounty(c, getCountyMeta(c));
+    }
+  }
 
   function renderInfo() {
     if (!activeCounty && !activeCity) {
@@ -174,10 +210,11 @@ export function createPlaceFinder({
     }
     const { raceKey, rName, dName } = getRaceInfo();
     const parts = [];
+    const meta = getCountyMeta(activeCounty);
     if (activeCity) {
-      parts.push(`<b>${activeCity.name}</b> (pop. ${fmt(activeCity.pop)}) · Município de ${activeCity.county}`);
+      parts.push(`<b>${activeCity.name}</b> (pop. ${fmt(activeCity.pop)})`);
     } else if (activeCounty) {
-      parts.push(`<b>Município de ${activeCounty.name}</b>`);
+      parts.push(`<b>${activeCounty.name}</b>${meta.pop ? ` (pop. ${fmt(meta.pop)})` : ''}`);
     }
     const cname = activeCounty ? activeCounty.name.toUpperCase() : '';
     const pList = prData && cname && prData.counties[cname];
@@ -185,7 +222,7 @@ export function createPlaceFinder({
       const p = pList[activePrecinctIdx];
       const rIdx = prData.races[raceKey];
       const v = rIdx != null ? p[3][rIdx] : null;
-      let s = `Zona <b>${p[0]}</b>: ${fmt(p[1])} eleitores`;
+      let s = `<b>${p[0]}</b>: ${fmt(p[1])} aptos`;
       if (v && (v[0] + v[1] + v[2]) > 0) {
         const tot = v[0] + v[1] + v[2];
         const rPct = ((v[0] / tot) * 100).toFixed(1);
@@ -202,7 +239,7 @@ export function createPlaceFinder({
         parts.push(
           `<span class="rep-t">${rName} ${fmt(r)} (${rPct}%)</span> vs. ` +
           `<span class="dem-t">${dName} ${fmt(d)} (${dPct}%)</span>` +
-          (pList ? ` · ${pList.length} zonas` : '')
+          (pList ? ` · ${pList.length} ${pList.length === 1 ? 'zona' : 'zonas'}` : '')
         );
       }
     }
@@ -218,16 +255,16 @@ export function createPlaceFinder({
     if (!c) {
       goCounty.value = '';
       populatePrecincts('');
-      onClearCounty();
+      notifyCountyChange(null);
       renderInfo();
       return;
     }
     goCounty.value = c.name;
     populatePrecincts(c.name);
-    onSelectCounty(c);
+    notifyCountyChange(c);
     if (fly) {
-      const span = Math.max(c.span || 12, 10);
-      flyTo(c.cx, -c.cy, Math.max(55, span * 3.2));
+      const span = Math.max(c.span || 14, 12);
+      flyTo(c.cx, -c.cy, Math.max(92, span * 3.8));
     }
     renderInfo();
   }
@@ -241,7 +278,7 @@ export function createPlaceFinder({
     populatePrecincts('');
     hidePin();
     clearPrecinctHighlight();
-    onClearCounty();
+    notifyCountyChange(null);
     onSelectPrecinct(null);
     renderInfo();
   }
@@ -253,10 +290,11 @@ export function createPlaceFinder({
     activeCity = city;
     const [x, y] = proj([city.lon, city.lat]);
     const c = byUpper.get(city.county.toUpperCase()) || null;
+    const tx = c ? c.cx : x;
+    const ty = c ? c.cy : y;
+    hidePin();
     selectCountyInternal(c, false);
-    const baseY = c ? (c.targetH || 0.4) : 0.4;
-    showPin(x, -y, baseY);
-    flyTo(x, -y, 68, 0.55);
+    flyTo(tx, -ty, 96, 0.64);
     renderInfo();
   };
 
@@ -278,13 +316,13 @@ export function createPlaceFinder({
       const did3d = onSelectPrecinct && onSelectPrecinct(
         pCode != null ? { countyUpper: cname, code: pCode } : null
       );
-      const sList = prShapes && prShapes[ cname ];
+      const sList = prShapes && prShapes[cname];
       const polys = sList && sList[activePrecinctIdx];
       if (polys && polys.length) {
         if (did3d) clearPrecinctHighlight();
         const topY = activeCounty.targetH || 0.4;
         const center = did3d ? centroidOfPolys(polys) : showPrecinctHighlight(polys, topY);
-        if (center) flyTo(center[0], center[1], 38, 0.52);
+        if (center) flyTo(center[0], center[1], 64, 0.60);
       } else {
         clearPrecinctHighlight();
       }
@@ -304,14 +342,14 @@ export function createPlaceFinder({
   return {
     refresh() {
       if (activeCity && activeCounty) {
-        const [x, y] = proj([activeCity.lon, activeCity.lat]);
-        showPin(x, -y, activeCounty.targetH || 0.4);
+        showPin(activeCounty.cx, -activeCounty.cy, activeCounty.targetH || 0.4);
       }
       if (activePrecinctIdx != null && activeCounty && prShapes) {
         const cname = activeCounty.name.toUpperCase();
         const polys = prShapes[cname] && prShapes[cname][activePrecinctIdx];
         if (polys) showPrecinctHighlight(polys, activeCounty.targetH || 0.4);
       }
+      if (activeCounty) notifyCountyChange(activeCounty);
       renderInfo();
     },
     pickCountyFromMap(c) {
@@ -319,6 +357,25 @@ export function createPlaceFinder({
       hidePin();
       if (activeCounty === c) clearAll();
       else selectCountyInternal(c, false);
+    },
+    selectCountyByName(name, fly = true) {
+      if (!name) return false;
+      const c = byUpper.get(name.toUpperCase().trim());
+      if (!c) return false;
+      activeCity = null;
+      hidePin();
+      selectCountyInternal(c, fly);
+      return true;
+    },
+    getActiveCounty: () => activeCounty,
+    getStateElectorateSummary: () => {
+      if (!prData || !prData.counties) return null;
+      let aptos = 0, zonesCount = 0;
+      for (const zList of Object.values(prData.counties)) {
+        zonesCount += zList.length;
+        for (const z of zList) aptos += (z[1] || 0);
+      }
+      return { aptos, zonesCount };
     },
     clearAll,
   };

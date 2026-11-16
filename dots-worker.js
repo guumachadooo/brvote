@@ -48,7 +48,7 @@ function sampleIn(prep, rand) {
   for (const p of prep.parts) { if (r <= p.cum) { part = p; break; } }
   const { rings, x0, y0, x1, y1 } = part;
   const w = x1 - x0, h = y1 - y0;
-  for (let k = 0; k < 12; k++) {
+  for (let k = 0; k < 36; k++) {
     const x = x0 + rand() * w;
     const y = y0 + rand() * h;
     if (inPoly(x, y, rings)) return [x, y];
@@ -56,7 +56,14 @@ function sampleIn(prep, rand) {
   let cx = 0, cy = 0;
   const o = rings[0];
   for (const [x, y] of o) { cx += x; cy += y; }
-  return [cx / o.length, cy / o.length];
+  cx /= o.length;
+  cy /= o.length;
+  const v = o[(rand() * o.length) | 0] || [cx, cy];
+  const t = 0.25 + rand() * 0.55;
+  return [
+    cx + (v[0] - cx) * t + (rand() - 0.5) * w * 0.08,
+    cy + (v[1] - cy) * t + (rand() - 0.5) * h * 0.08,
+  ];
 }
 function mulberry32(a) {
   return function () {

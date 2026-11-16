@@ -32,22 +32,36 @@
     </nav>
   </header>
 
-  <div id="stage">
-    <div id="callouts"></div>
-  </div>
-
-  <div class="card-dock">
-    <div class="card">
-      <div class="step-tag" id="stepTag">Passo 1 de 6</div>
-      <h1 id="headline"></h1>
-      <p id="body"></p>
-      <div class="stat-row" id="stats"></div>
-      <div class="nav">
-        <button id="prev">← Voltar</button>
-        <div class="dots" id="dots"></div>
-        <button id="play">▶ Reproduzir automaticamente</button>
-        <button id="next" class="primary">Próximo →</button>
+  <div class="story-body">
+    <div class="card-dock" id="cardDock">
+      <div class="card" id="tourCard">
+        <div class="card-head">
+          <div class="step-tag" id="stepTag">Passo 1 de 6</div>
+          <button type="button" id="cardToggleBtn" class="card-min-btn" title="Minimizar ou expandir texto explicativo">Minimizar −</button>
+        </div>
+        <h1 id="headline"></h1>
+        <div class="card-collapsible" id="cardCollapsible">
+          <p id="body"></p>
+          <div class="stat-row" id="stats"></div>
+        </div>
+        <div class="timeline-row">
+          <div class="track" id="track" role="slider" tabindex="0" aria-label="Cena do tour" aria-valuemin="1" aria-valuemax="6" aria-valuenow="1" title="Clique ou arraste para pular para qualquer cena do voo">
+            <i id="trackFill"></i>
+            <span class="marks" id="trackMarks" aria-hidden="true"></span>
+          </div>
+          <span class="scene-count" id="sceneCount" aria-hidden="true">1 / 6</span>
+        </div>
+        <div class="nav">
+          <button id="prev" type="button">← Voltar</button>
+          <div class="dots" id="dots"></div>
+          <button id="play" type="button">▶ Auto</button>
+          <button id="next" class="primary" type="button">Próximo →</button>
+        </div>
       </div>
+    </div>
+
+    <div id="stage">
+      <div id="callouts"></div>
     </div>
   </div>
 </div>

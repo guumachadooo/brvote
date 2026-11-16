@@ -97,8 +97,21 @@ export function createDotLayer({ counties, group, getHeight, getPixelRatio }) {
   const outlineGroup = new THREE.Group();
   outlineGroup.visible = false;
   outlineGroup.position.y = 0.18;
-  const lineMat = new THREE.LineBasicMaterial({ color: 0x263149, transparent: true, opacity: 0.75 });
+  const baseMat = new THREE.MeshBasicMaterial({
+    color: 0x0b1924,
+    transparent: true,
+    opacity: 0.88,
+    depthWrite: false,
+  });
+  const lineMat = new THREE.LineBasicMaterial({ color: 0x1e3a4c, transparent: true, opacity: 0.78 });
   for (const c of counties) {
+    if (c.shapes && c.shapes.length) {
+      const bgGeo = new THREE.ShapeGeometry(c.shapes);
+      bgGeo.rotateX(-Math.PI / 2);
+      const bgMesh = new THREE.Mesh(bgGeo, baseMat);
+      bgMesh.position.y = -0.06;
+      outlineGroup.add(bgMesh);
+    }
     for (const rings of c.polys) {
       for (const r of rings) {
         const pts = r.map(([x, y]) => new THREE.Vector3(x, 0, -y));
@@ -120,6 +133,11 @@ export function createDotLayer({ counties, group, getHeight, getPixelRatio }) {
   let activePrRace = null;
   let prFileUrl = null;
   let prShapesUrl = null;
+
+  let baseAlpha = 0.82;
+  let targetPointBase = 2.3;
+  let fadeFactor = 0.0;
+  let targetFade = 0.0;
 
   function loadPrecinctsOnce() {
     if (precinctPromise) return precinctPromise;
@@ -171,6 +189,7 @@ export function createDotLayer({ counties, group, getHeight, getPixelRatio }) {
     return true;
   }
 
+  let lastAppliedReqId = 0;
   worker.onmessage = (e) => {
     const m = e.data;
     if (m.type === 'ready') {
@@ -181,7 +200,8 @@ export function createDotLayer({ counties, group, getHeight, getPixelRatio }) {
         fn();
       }
     } else if (m.type === 'dots') {
-      if (m.reqId !== reqId) return;
+      if (m.reqId < lastAppliedReqId) return;
+      lastAppliedReqId = m.reqId;
       let total = 0;
       for (const b of m.buffers) total += b.length;
       const merged = new Int16Array(total);
@@ -245,36 +265,74 @@ export function createDotLayer({ counties, group, getHeight, getPixelRatio }) {
       if (workerReady) dispatchToWorker();
       else pendingMsg = dispatchToWorker;
     };
+    // Gera pontos imediatamente com os polígonos estaduais/municipais e refina assim que as zonas terminarem de baixar
+    send();
     if (raceKey && !precinctCache && prFileUrl) {
-      loadPrecinctsOnce().then(send);
-    } else {
-      send();
+      loadPrecinctsOnce().then(cache => {
+        if (cache && lastGenArgs && lastGenArgs.raceKey === raceKey) {
+          send();
+        }
+      });
     }
   }
   function regenerate() {
     if (lastGenArgs) generate(lastGenArgs, onDone);
   }
 
-  function setVisible(v) {
-    points.visible = v;
-    outlineGroup.visible = v;
+  function setVisible(v, immediate = false) {
+    targetFade = v ? 1.0 : 0.0;
+    if (immediate) {
+      fadeFactor = targetFade;
+      uniforms.uAlpha.value = baseAlpha * fadeFactor;
+      baseMat.opacity = 0.88 * fadeFactor;
+      lineMat.opacity = 0.78 * fadeFactor;
+      points.visible = v;
+      outlineGroup.visible = v;
+    } else if (v) {
+      points.visible = true;
+      outlineGroup.visible = true;
+    }
   }
   function setRaise(v) {
     uniforms.uHasHeight.value = v;
   }
-  function setScaleAppearance(scale) {
-    if (scale <= 10)      { uniforms.uPointBase.value = 1.45; uniforms.uAlpha.value = 0.62; }
-    else if (scale <= 25) { uniforms.uPointBase.value = 1.75; uniforms.uAlpha.value = 0.72; }
-    else if (scale <= 100){ uniforms.uPointBase.value = 2.25; uniforms.uAlpha.value = 0.82; }
-    else if (scale <= 250){ uniforms.uPointBase.value = 2.65; uniforms.uAlpha.value = 0.86; }
-    else                  { uniforms.uPointBase.value = 3.1;  uniforms.uAlpha.value = 0.90; }
+  function setScaleAppearance(scale, immediate = false) {
+    if (scale <= 10)      { targetPointBase = 1.45; baseAlpha = 0.62; }
+    else if (scale <= 25) { targetPointBase = 1.75; baseAlpha = 0.72; }
+    else if (scale <= 100){ targetPointBase = 2.25; baseAlpha = 0.82; }
+    else if (scale <= 250){ targetPointBase = 2.65; baseAlpha = 0.86; }
+    else                  { targetPointBase = 3.1;  baseAlpha = 0.90; }
+    if (immediate) {
+      uniforms.uPointBase.value = targetPointBase;
+      uniforms.uAlpha.value = baseAlpha * fadeFactor;
+    }
+  }
+  function tick(dt = 0.016) {
+    const rate = Math.min(1, dt * 9.0);
+    if (Math.abs(fadeFactor - targetFade) > 0.002) {
+      fadeFactor += (targetFade - fadeFactor) * rate;
+    } else {
+      fadeFactor = targetFade;
+    }
+    if (Math.abs(uniforms.uPointBase.value - targetPointBase) > 0.005) {
+      uniforms.uPointBase.value += (targetPointBase - uniforms.uPointBase.value) * rate;
+    } else {
+      uniforms.uPointBase.value = targetPointBase;
+    }
+    uniforms.uAlpha.value = baseAlpha * fadeFactor;
+    baseMat.opacity = 0.88 * fadeFactor;
+    lineMat.opacity = 0.78 * fadeFactor;
+    const vis = fadeFactor > 0.004 || targetFade > 0.004;
+    points.visible = vis;
+    outlineGroup.visible = vis;
   }
   function onResize() {
     uniforms.uPixelRatio.value = getPixelRatio();
   }
 
   return {
-    generate, setVisible, setRaise, setScaleAppearance,
-    syncHeights, setHover, onResize, configurePrecincts,
+    generate, regenerate, setVisible, setRaise, setScaleAppearance,
+    syncHeights, setHover, onResize, configurePrecincts, tick,
+    isFading: () => Math.abs(fadeFactor - targetFade) > 0.004,
   };
 }

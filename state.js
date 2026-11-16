@@ -1,5 +1,6 @@
-// Esquema oficial do usavote original adaptado para todas as 27 UFs do Brasil
+// Esquema oficial do usavote original adaptado para o Brasil Inteiro (BR) e todas as 27 UFs
 const UF_DEFS = [
+  { code: 'BR', slug: 'br', fips: '00', name: 'Brasil', region: 'Nacional', counties: 27, precincts: '5.570 municípios', capital: 'São Paulo', secondCity: 'Minas Gerais', smallMun: 'Roraima' },
   { code: 'SP', slug: 'sp', fips: '35', name: 'São Paulo', region: 'Sudeste', counties: 645, precincts: '402 zonas eleitorais', capital: 'São Paulo', secondCity: 'Campinas', smallMun: 'Borá' },
   { code: 'MG', slug: 'mg', fips: '31', name: 'Minas Gerais', region: 'Sudeste', counties: 853, precincts: '304 zonas eleitorais', capital: 'Belo Horizonte', secondCity: 'Uberlândia', smallMun: 'Serra da Saudade' },
   { code: 'RJ', slug: 'rj', fips: '33', name: 'Rio de Janeiro', region: 'Sudeste', counties: 92, precincts: '165 zonas eleitorais', capital: 'Rio de Janeiro', secondCity: 'São Gonçalo', smallMun: 'Macuco' },
@@ -31,7 +32,8 @@ const UF_DEFS = [
 
 const stateList = UF_DEFS.map(u => {
   const isDF = u.slug === 'df';
-  const unitName = isDF ? 'regiões administrativas' : 'municípios';
+  const isBR = u.slug === 'br';
+  const unitName = isBR ? 'estados (UFs)' : (isDF ? 'regiões administrativas' : 'municípios');
   return {
     code: u.code,
     slug: u.slug,
@@ -67,6 +69,11 @@ const stateList = UF_DEFS.map(u => {
         href: `shade-by-votes.html?uf=${u.slug}`,
         title: 'E se pintarmos pelo saldo de votos? →',
         desc: 'Um jeito simples de corrigir o mapa plano sem precisar de 3D.'
+      },
+      {
+        href: `volume.html?uf=${u.slug}`,
+        title: 'Votos como Volume 3D e Jarros despejando votos →',
+        desc: `Veja os ${unitName} erguidos por densidade (votos/km²) e preenchidos por jarros 3D.`
       }
     ],
     tour: true,

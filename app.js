@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { geoMercator } from 'd3-geo';
-import { STATE } from './state.js';
+import { STATES, STATE } from './state.js';
 import { createDotLayer } from './dots.js';
 import { createPlaceFinder } from './places.js';
 import { createPrecinctColumns } from './precinct-columns.js';
@@ -9,22 +9,63 @@ import { createCityMarkers } from './cities.js';
 import { DEM_C, REP_C, OTHER_HEX, marginColorHex, leadColorHex, shiftColorHex } from './colors.js';
 import { renderSourceNote } from './sourcelist.js';
 import { withBusy } from './busy.js';
+import { computeInteriorPoint } from './callout-logic.js';
 
-const UNIT_CAP = STATE.slug === 'df' ? 'Região Administrativa' : 'Município';
-const UNITS_CAP = STATE.slug === 'df' ? 'Regiões Administrativas' : 'Municípios';
-const unitLow = STATE.slug === 'df' ? 'região administrativa' : 'município';
-const unitsLow = STATE.slug === 'df' ? 'regiões administrativas' : 'municípios';
+const easeQuint = t => t < 0.5 ? 16 * t * t * t * t * t : 1 - Math.pow(-2 * t + 2, 5) / 2;
+
+const isBR = STATE.slug === 'br';
+const UNIT_CAP = isBR ? 'Estado' : (STATE.slug === 'df' ? 'Região Administrativa' : 'Município');
+const UNITS_CAP = isBR ? 'Estados' : (STATE.slug === 'df' ? 'Regiões Administrativas' : 'Municípios');
+const unitLow = isBR ? 'estado' : (STATE.slug === 'df' ? 'região administrativa' : 'município');
+const unitsLow = isBR ? 'estados' : (STATE.slug === 'df' ? 'regiões administrativas' : 'municípios');
+
+const initParams = new URLSearchParams(location.search);
+function checkIsFramed() {
+  if (/^pane[AB]$|^frame[AB]$/i.test(window.name || '')) return true;
+  if (initParams.get('framed') === '1') return true;
+  try {
+    return window.self !== window.top &&
+      Boolean(window.parent && window.parent.location && /compare\.html/i.test(window.parent.location.pathname));
+  } catch {
+    return false;
+  }
+}
+const isFramed = checkIsFramed();
+if (isFramed) {
+  document.documentElement.classList.add('framed-html');
+  document.body.classList.add('framed');
+} else {
+  document.documentElement.classList.remove('framed-html');
+  document.body.classList.remove('framed');
+}
 
 document.title = `Eleições em ${STATE.name} — Como o Brasil Vota`;
 document.getElementById('countyCount').textContent = STATE.counties;
 document.getElementById('method').textContent = STATE.method;
 renderSourceNote(document.getElementById('sources'), STATE);
 
+if (isBR) {
+  const uc = document.getElementById('unitCounty');
+  const up = document.getElementById('unitPrecinct');
+  const rs = document.getElementById('reset');
+  const qs = document.getElementById('munQuickSearch');
+  const gc = document.getElementById('goCounty');
+  const ab = document.getElementById('aloneBtn');
+  const at = document.getElementById('aloneTopBtn');
+  if (uc) uc.textContent = 'Estados (27)';
+  if (up) up.textContent = 'Cidades (5.570)';
+  if (rs) rs.textContent = 'País inteiro';
+  if (qs) qs.placeholder = 'Buscar cidade ou estado (ex: Campinas, Minas Gerais)…';
+  if (gc && gc.options[0]) gc.options[0].textContent = 'Estado (UF)…';
+  if (ab) ab.textContent = 'Só este local';
+  if (at) at.textContent = 'Só este local';
+}
+
 const viewsEl = document.getElementById('views');
 if (STATE.dots) {
   viewsEl.innerHTML =
-    `<a class="view-link active" href="${STATE.results.href}">Mapa de resultados</a>` +
-    `<a class="view-link" href="${STATE.dots}">Densidade de pontos</a>`;
+    `<a class="view-link active" href="${STATE.results.href}">Colunas 3D</a>` +
+    `<a class="view-link" href="${STATE.dots}">Pontos</a>`;
   const md = document.getElementById('modeDots');
   if (md) md.href = STATE.dots;
 } else {
@@ -69,7 +110,7 @@ const proj = geoMercator().fitSize([W, H], { type: 'FeatureCollection', features
 
 const stage = document.getElementById('stage');
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x0b0e14);
+scene.background = new THREE.Color(0x07131a);
 
 const camera = new THREE.PerspectiveCamera(38, 1, 1, 2000);
 camera.position.set(0, 215, 225);
@@ -96,8 +137,8 @@ function syncHint() {
   const h = document.getElementById('hint');
   if (!h) return;
   h.textContent = panMode
-    ? `Arraste para mover · Clique direito (ou 2 dedos) para girar · Role para aproximar · Passe o mouse em um ${unitLow}`
-    : `Arraste para girar · Clique direito para mover · Role para aproximar · Passe o mouse em um ${unitLow}`;
+    ? `Arraste para mover · Clique direito (ou 2 dedos) para girar · Role para aproximar · Clique em um ${unitLow}`
+    : `Arraste para girar · Clique direito para mover · Role para aproximar · Clique em um ${unitLow}`;
 }
 if (dragModeBtn) {
   dragModeBtn.onclick = () => {
@@ -105,7 +146,7 @@ if (dragModeBtn) {
     controls.mouseButtons.LEFT = panMode ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE;
     controls.mouseButtons.RIGHT = panMode ? THREE.MOUSE.ROTATE : THREE.MOUSE.PAN;
     controls.touches.ONE = panMode ? THREE.TOUCH.PAN : THREE.TOUCH.ROTATE;
-    dragModeBtn.textContent = panMode ? 'Arrastar move' : 'Arrastar gira';
+    dragModeBtn.textContent = panMode ? 'Mover' : 'Girar';
     dragModeBtn.classList.toggle('active', !panMode);
     syncHint();
   };
@@ -113,14 +154,26 @@ if (dragModeBtn) {
 syncHint();
 
 let userMovedCamera = false;
-renderer.domElement.addEventListener('pointerdown', () => { userMovedCamera = true; });
-renderer.domElement.addEventListener('wheel', () => { userMovedCamera = true; }, { passive: true });
+let camAnim = null;
+function animateCameraTo(toPos, toTarget, dur = 780) {
+  camAnim = {
+    fromPos: camera.position.clone(),
+    toPos: toPos.clone(),
+    fromTarget: controls.target.clone(),
+    toTarget: toTarget.clone(),
+    t0: performance.now(),
+    dur,
+  };
+}
+renderer.domElement.addEventListener('pointerdown', () => { userMovedCamera = true; camAnim = null; });
+renderer.domElement.addEventListener('wheel', () => { userMovedCamera = true; camAnim = null; }, { passive: true });
+renderer.domElement.addEventListener('touchstart', () => { userMovedCamera = true; camAnim = null; }, { passive: true });
 
-scene.add(new THREE.AmbientLight(0xffffff, 0.72));
-const sun = new THREE.DirectionalLight(0xffffff, 0.75);
+scene.add(new THREE.AmbientLight(0xffffff, 0.74));
+const sun = new THREE.DirectionalLight(0xffffff, 0.78);
 sun.position.set(80, 180, 100);
 scene.add(sun);
-const fill = new THREE.DirectionalLight(0x9ab3d9, 0.25);
+const fill = new THREE.DirectionalLight(0x8be2b8, 0.24);
 fill.position.set(-100, 90, -80);
 scene.add(fill);
 
@@ -129,7 +182,7 @@ scene.add(group);
 
 const baseGeo = new THREE.PlaneGeometry(600, 600);
 baseGeo.rotateX(-Math.PI / 2);
-const baseMesh = new THREE.Mesh(baseGeo, new THREE.MeshBasicMaterial({ color: 0x0b0e14 }));
+const baseMesh = new THREE.Mesh(baseGeo, new THREE.MeshBasicMaterial({ color: 0x07131a }));
 baseMesh.position.y = -0.05;
 scene.add(baseMesh);
 
@@ -155,21 +208,30 @@ for (const f of features) {
   const polys = geom.type === 'Polygon' ? [geom.coordinates] : geom.coordinates;
   const shapes = [];
   const rawPolys = [];
-  let area = 0, cx = 0, cy = 0, nPts = 0;
+  let area = 0, nPts = 0;
+  let bestRingPts = null, bestRingArea = -1;
   let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
 
   for (const poly of polys) {
     const outer = ringToVec2(poly[0]);
     if (outer.length < 3) continue;
+    let rArea = 0;
     for (let i = 0; i < outer.length; i++) {
       const a = outer[i], b = outer[(i + 1) % outer.length];
-      area += (a.x * b.y - b.x * a.y);
-      cx += a.x; cy += a.y; nPts++;
+      const cross = (a.x * b.y - b.x * a.y);
+      area += cross;
+      rArea += cross;
+      nPts++;
       if (a.x < x0) x0 = a.x; if (a.x > x1) x1 = a.x;
       if (a.y < y0) y0 = a.y; if (a.y > y1) y1 = a.y;
     }
+    const outerArr = outer.map(v => [v.x, v.y]);
+    if (Math.abs(rArea) > bestRingArea) {
+      bestRingArea = Math.abs(rArea);
+      bestRingPts = outerArr;
+    }
     const sh = new THREE.Shape(outer);
-    const ringsArr = [outer.map(v => [v.x, v.y])];
+    const ringsArr = [outerArr];
     for (let h = 1; h < poly.length; h++) {
       const hole = ringToVec2(poly[h]);
       if (hole.length >= 3) {
@@ -180,9 +242,9 @@ for (const f of features) {
     shapes.push(sh);
     rawPolys.push(ringsArr);
   }
-  if (!shapes.length) continue;
+  if (!shapes.length || !nPts) continue;
   area = Math.abs(area) * 0.5;
-  cx /= nPts; cy /= nPts;
+  const [cx, cy] = computeInteriorPoint(bestRingPts || rawPolys[0][0]);
   const span = Math.max(x1 - x0, y1 - y0);
 
   const extrude = new THREE.ExtrudeGeometry(shapes, { depth: 1, bevelEnabled: false });
@@ -207,6 +269,7 @@ for (const f of features) {
     name: rawName,
     key: rawName.toUpperCase(),
     area, cx, cy, span,
+    shapes,
     polys: rawPolys,
     mesh, mat, lower, lowerMat, middle,
     targetH: 0.3, currentH: 0.3,
@@ -269,34 +332,162 @@ const cityMarkers = STATE.data.cities
       proj: ll => { const p = proj(ll); return p ? [p[0] - W / 2, -(p[1] - H / 2)] : null; },
       cityUrl: STATE.data.cities,
       counties,
-      getTopY: c => c ? (BASE_H + (c.targetH - BASE_H) * raiseAmount) : BASE_H,
+      getTopY: c => {
+        if (!c || viewMode === 'dots') {
+          return { baseY: BASE_H, lift: 0, visible: !aloneMode || c === pinnedCounty };
+        }
+        const match = countyMatchesFilter(c);
+        const effK = match ? raiseAmount : 0;
+        const baseY = unitMode === 'precinct'
+          ? (BASE_H + (c.targetH - BASE_H) * effK)
+          : (c.currentH || BASE_H);
+        const targetDelta = Math.max(0.01, (c.targetH || BASE_H) - BASE_H);
+        const curLift = unitMode === 'precinct'
+          ? effK
+          : Math.max(0, Math.min(1, ((c.currentH || BASE_H) - BASE_H) / targetDelta));
+        return {
+          baseY,
+          lift: curLift,
+          visible: !aloneMode || c === pinnedCounty,
+        };
+      },
     })
   : null;
 
 const fmt = n => Math.round(n).toLocaleString('pt-BR');
 const pct = x => (x * 100).toFixed(1) + '%';
 
+let pinnedCounty = null;
+let pinnedMeta = null;
+let pinnedPrecinct = null;
+let aloneMode = false;
+let filterWinner = 'all'; // 'all' | 'rep' | 'dem' | 'close'
+
+function syncAloneButtons() {
+  const hasSelection = unitMode === 'precinct' ? !!pinnedPrecinct : !!pinnedCounty;
+  const canAlone = hasSelection && viewMode === 'columns' && raiseAmount >= 0.05;
+  const active = aloneMode && canAlone;
+  const aloneWrap = document.getElementById('aloneWrap');
+  const aloneBtn = document.getElementById('aloneBtn');
+  const aloneTopBtn = document.getElementById('aloneTopBtn');
+  const munAloneBtn = document.getElementById('munAloneBtn');
+  if (aloneWrap) {
+    aloneWrap.style.display = (viewMode === 'columns' && raiseAmount >= 0.05) ? 'flex' : 'none';
+  }
+  const selName = unitMode === 'precinct'
+    ? (pinnedPrecinct ? pinnedPrecinct.code : '')
+    : (pinnedCounty ? pinnedCounty.name : '');
+  const unitName = (isBR && unitMode === 'precinct') ? 'cidade' : unitLow;
+  const unitsName = (isBR && unitMode === 'precinct') ? 'cidades' : unitsLow;
+  const titleTxt = !hasSelection
+    ? `Escolha um ${unitName} na busca ou clicando no mapa e pressione aqui para ver apenas a coluna dele erguida`
+    : active
+    ? `Erguer novamente todos os ${unitsName}`
+    : `Abaixar os outros ${unitsName} e ver a coluna de ${selName} isolada`;
+  for (const btn of [aloneBtn, aloneTopBtn, munAloneBtn]) {
+    if (!btn) continue;
+    btn.disabled = !canAlone;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-pressed', String(active));
+    btn.title = titleTxt;
+    if (btn === munAloneBtn) {
+      btn.textContent = active ? 'Mostrar todos' : 'Isolar coluna 3D';
+    }
+  }
+}
+
+function frameCountyColumn(c) {
+  if (!c) return;
+  userMovedCamera = true;
+  const isFlatView = viewMode !== 'dots' && raiseAmount < 0.05;
+  const h = isFlatView ? BASE_H : (BASE_H + (c.targetH - BASE_H) * Math.max(0.25, raiseAmount));
+  const dist = Math.max(72, Math.min(150, (c.span || 8) * 3.4 + h * 1.15));
+  const toPos = isFlatView
+    ? new THREE.Vector3(c.cx, Math.max(110, dist * 1.25), -c.cy + 0.01)
+    : new THREE.Vector3(c.cx + dist * 0.24, Math.max(42, h * 0.85 + dist * 0.58), -c.cy + dist * 0.88);
+  const toTarget = new THREE.Vector3(c.cx, isFlatView ? 0 : h * 0.32, -c.cy);
+  animateCameraTo(toPos, toTarget, 840);
+}
+
+function toggleAloneMode(forceVal) {
+  const hasSelection = unitMode === 'precinct' ? !!pinnedPrecinct : !!pinnedCounty;
+  const next = typeof forceVal === 'boolean' ? forceVal : !aloneMode;
+  if (next && !hasSelection) return;
+  aloneMode = next;
+  if (aloneMode && raiseAmount < 0.2) {
+    raiseAmount = 1;
+    const rs = document.getElementById('raise');
+    if (rs) rs.value = '100';
+  }
+  if (prCols) {
+    prCols.setIsolatedItem(aloneMode && unitMode === 'precinct' ? pinnedPrecinct : null);
+  }
+  applyHeights();
+  syncAloneButtons();
+  renderMunicipalityCard();
+  if (unitMode === 'precinct' && pinnedPrecinct && pinnedTooltipOpen) {
+    showPinnedPrecinctTooltip();
+    if (aloneMode) frameCountyColumn(pinnedPrecinct);
+  } else if (pinnedCounty && pinnedTooltipOpen) {
+    showPinnedTooltip();
+    if (aloneMode) frameCountyColumn(pinnedCounty);
+  }
+}
+
 function syncUrl() {
   const params = new URLSearchParams();
   params.set('uf', STATE.slug);
   if (activeId && activeId !== STATE.defaultRace) params.set('race', activeId);
   if (viewMode === 'dots') {
-    params.set('voters', String(dotScale));
+    params.set('look', 'dots');
+    if (dotScale !== 250) params.set('voters', String(dotScale));
   } else {
-    if (unitMode === 'precinct') params.set('unit', 'precinct');
+    if (isBR) {
+      if (unitMode === 'county') params.set('unit', 'county');
+    } else if (unitMode === 'precinct') {
+      params.set('unit', 'precinct');
+    }
     if (!colorByLead) params.set('color', 'margin');
   }
-  if (raiseAmount < 0.05) params.set('flat', '1');
+  if (raiseAmount < 0.05 && viewMode !== 'dots') params.set('flat', '1');
+  if (pinnedCounty) params.set('mun', pinnedCounty.name);
+  if (aloneMode && (pinnedCounty || pinnedPrecinct)) params.set('alone', '1');
+  if (document.body.classList.contains('framed')) params.set('framed', '1');
   const qs = params.toString();
   history.replaceState(null, '', location.pathname + (qs ? '?' + qs : ''));
+
+  const cmp = document.getElementById('compareLink');
+  if (cmp) {
+    const cmpParams = new URLSearchParams();
+    cmpParams.set('uf', STATE.slug);
+    if (activeId) cmpParams.set('race', activeId);
+    if (pinnedCounty) cmpParams.set('mun', pinnedCounty.name);
+    cmp.href = 'compare.html?' + cmpParams.toString();
+  }
+  const vol = document.getElementById('volumeLink');
+  if (vol) {
+    vol.href = `volume.html?uf=${STATE.slug}${activeId ? `&race=${encodeURIComponent(activeId)}` : ''}`;
+  }
 }
 
 let animStart = 0;
 
+function countyMatchesFilter(c) {
+  if (aloneMode && pinnedCounty) return c === pinnedCounty;
+  if (filterWinner === 'all') return true;
+  const { r = 0, d = 0, m = 0 } = c.cur || {};
+  if (filterWinner === 'rep') return r >= d;
+  if (filterWinner === 'dem') return d > r;
+  if (filterWinner === 'close') return Math.abs(m) < 5;
+  return true;
+}
+
 function applyHeights() {
   const k = raiseAmount;
   for (const c of counties) {
-    const h = BASE_H + (c.targetH - BASE_H) * k;
+    const match = countyMatchesFilter(c);
+    const effK = match ? k : 0;
+    const h = BASE_H + (c.targetH - BASE_H) * effK;
     const { r = 0, d = 0, o = 0, tot = 0 } = c.cur || {};
     const rWins = r >= d;
     const winVotes = rWins ? r : d;
@@ -304,7 +495,7 @@ function applyHeights() {
     c.fromBot = c.lower.scale.y || 0.01;
     c.fromMid = c.middle.visible ? c.middle.scale.y : 0;
     c.fromTop = c.mesh.scale.y || 0.29;
-    const split = !activeRace?.isShift && k > 0.02 && tot > 0 && winVotes > 0 && loseVotes > 0;
+    const split = !activeRace?.isShift && effK > 0.02 && tot > 0 && winVotes > 0 && loseVotes > 0;
     if (split) {
       c.toBot = Math.max(0.02, h * (loseVotes / tot));
       c.toMid = o > 0 ? h * (o / tot) : 0;
@@ -323,8 +514,9 @@ function applyHeights() {
       raiseEl.style.display = k > 0.02 ? 'inline' : 'none';
     }
   }
-  if (prCols && unitMode === 'precinct') prCols.setRaise(k);
+  if (prCols && unitMode === 'precinct') prCols.setRaise(viewMode === 'dots' ? 0 : k, true);
   if (cityMarkers) cityMarkers.refreshHeights();
+  syncAloneButtons();
   animStart = performance.now();
 }
 
@@ -377,15 +569,187 @@ function applyColors() {
   if (prCols && unitMode === 'precinct') prCols.setColorMode(colorByLead);
 }
 
+// Renderiza o cartão de Raio-X Municipal completo quando um município está selecionado
+function renderMunicipalityCard() {
+  const cardEl = document.getElementById('munCard');
+  if (!cardEl) return;
+  if (!pinnedCounty || !activeRace) {
+    cardEl.style.display = 'none';
+    cardEl.innerHTML = '';
+    return;
+  }
+  const c = pinnedCounty;
+  const meta = pinnedMeta || { pop: null, aptos: 0, zonesCount: 0 };
+  const curRow = activeRace.counties[c.key] || activeRace.counties[c.name] || [0, 0, 0];
+  const curTot = (curRow[0] || 0) + (curRow[1] || 0) + (curRow[2] || 0);
+  const turnoutPct = meta.aptos > 0 ? Math.min(100, (curTot / meta.aptos) * 100) : null;
+
+  // Todas as disputas de 2026 no município
+  const races26Ids = ['2026-pres-2t', '2026-pres-1t', '2026-gov', '2026-sen', '2026-dep-fed', '2026-dep-est'].filter(id => races[id]);
+  const races26Html = races26Ids.map(id => {
+    const rr = races[id];
+    const row = rr.counties[c.key] || rr.counties[c.name] || [0, 0, 0];
+    const rv = row[0] || 0, dv = row[1] || 0, ov = row[2] || 0;
+    const t = rv + dv + ov || 1;
+    const rp = (rv / t) * 100, dp = (dv / t) * 100, op = (ov / t) * 100;
+    const shortLabel = rr.office === 'Presidente' ? `Pres. ${rr.tag === '2º Turno' ? '2ºT' : '1ºT'}` :
+      rr.office === 'Governador' ? 'Governador' :
+      rr.office.startsWith('Senad') ? 'Senado' :
+      rr.office === 'Deputado Federal' ? 'Dep. Federal' : 'Dep. Estadual';
+    const winTxt = rv >= dv
+      ? `<span class="rep-t">PL ${rp.toFixed(1)}%</span>`
+      : `<span class="dem-t">PT ${dp.toFixed(1)}%</span>`;
+    return `
+      <div class="mun-race-row ${id === activeId ? 'active' : ''}" data-race="${id}" title="Clique para ver ${rr.office} no mapa">
+        <span>${shortLabel}</span>
+        <div class="mun-race-bar">
+          <div class="r" style="width:${rp.toFixed(1)}%"></div>
+          <div class="o" style="width:${op.toFixed(1)}%"></div>
+          <div class="d" style="width:${dp.toFixed(1)}%"></div>
+        </div>
+        <span>${winTxt}</span>
+      </div>
+    `;
+  }).join('');
+
+  // Histórico Presidencial 2018 -> 2022 -> 2026 no município
+  const histIds = ['2018-presidente', '2022-presidente', '2026-pres-2t'].filter(id => races[id]);
+  const histHtml = histIds.map(id => {
+    const rr = races[id];
+    const row = rr.counties[c.key] || rr.counties[c.name] || [0, 0, 0];
+    const rv = row[0] || 0, dv = row[1] || 0, ov = row[2] || 0;
+    const t = rv + dv + ov || 1;
+    const rp = (rv / t) * 100, dp = (dv / t) * 100;
+    const winTxt = rv >= dv
+      ? `<span class="rep-t">PL ${rp.toFixed(1)}%</span> (${fmt(rv)})`
+      : `<span class="dem-t">PT ${dp.toFixed(1)}%</span> (${fmt(dv)})`;
+    return `
+      <div class="mun-race-row ${id === activeId ? 'active' : ''}" data-race="${id}">
+        <span>Pres. ${rr.year}</span>
+        <div class="mun-race-bar">
+          <div class="r" style="width:${rp.toFixed(1)}%"></div>
+          <div class="d" style="width:${dp.toFixed(1)}%"></div>
+        </div>
+        <span>${winTxt}</span>
+      </div>
+    `;
+  }).join('');
+
+  const stDrill = isBR ? STATES.find(s => s.slug !== 'br' && s.name.toUpperCase() === c.key) : null;
+  const drillHtml = stDrill
+    ? `<a class="flight-link" style="margin-bottom:10px;text-align:center" href="estado.html?uf=${stDrill.slug}">Explorar os ${stDrill.counties} municípios de ${stDrill.name} em 3D →</a>`
+    : '';
+
+  cardEl.style.display = 'block';
+  cardEl.innerHTML = `
+    <div class="mun-head">
+      <div>
+        <div class="kicker">Raio-X ${isBR ? 'Estadual' : 'Municipal'} · ${STATE.code}</div>
+        <h3>${c.name}</h3>
+      </div>
+      <div class="mun-actions">
+        <button type="button" id="munAloneBtn" title="Isolar a coluna 3D deste ${unitLow}">${aloneMode ? 'Mostrar todos' : 'Isolar coluna 3D'}</button>
+        <button type="button" id="munShareBtn" title="Copiar link direto para este ${unitLow}">Compartilhar</button>
+        <button type="button" id="munCloseBtn" title="Fechar Raio-X">✕</button>
+      </div>
+    </div>
+    ${drillHtml}
+    <div class="mun-stats">
+      <div class="mun-stat">
+        <span>Votos válidos (${activeRace.year})</span>
+        <b>${fmt(curTot)}</b>
+      </div>
+      <div class="mun-stat">
+        <span>Eleitores aptos (TSE)</span>
+        <b>${meta.aptos ? fmt(meta.aptos) : '—'}</b>
+      </div>
+      <div class="mun-stat">
+        <span>${meta.pop ? 'Pop. Censo 2022' : 'Comp. válido'}</span>
+        <b>${meta.pop ? fmt(meta.pop) : (turnoutPct ? turnoutPct.toFixed(1) + '%' : '—')}</b>
+      </div>
+    </div>
+    <div style="font-size:11.5px;color:var(--muted);margin-bottom:6px">
+      <b class="rep-t">${activeRace.rep}: ${fmt(curRow[0] || 0)}</b> vs.
+      <b class="dem-t">${activeRace.dem}: ${fmt(curRow[1] || 0)}</b>
+      ${meta.zonesCount ? ` · <b>${meta.zonesCount}</b> ${meta.zonesCount === 1 ? 'zona eleitoral' : 'zonas eleitorais'}` : ''}
+      ${turnoutPct ? ` · Comparecimento válido: <b>${turnoutPct.toFixed(1)}%</b>` : ''}
+    </div>
+    <div class="mun-subhead">Todos os cargos em 2026 neste ${unitLow}</div>
+    <div class="mun-races">${races26Html}</div>
+    <div class="mun-subhead">Evolução presidencial (2018 → 2022 → 2026)</div>
+    <div class="mun-races">${histHtml}</div>
+  `;
+
+  cardEl.querySelectorAll('.mun-race-row[data-race]').forEach(el => {
+    el.onclick = () => selectRace(el.dataset.race);
+  });
+  const munAloneBtn = document.getElementById('munAloneBtn');
+  if (munAloneBtn) munAloneBtn.onclick = () => toggleAloneMode();
+  const closeBtn = document.getElementById('munCloseBtn');
+  if (closeBtn) closeBtn.onclick = () => { if (places) places.clearAll(); };
+  const shareBtn = document.getElementById('munShareBtn');
+  if (shareBtn) {
+    shareBtn.onclick = () => {
+      syncUrl();
+      const url = getPublicShareUrl();
+      copyTextToClipboard(url).then(() => {
+        shareBtn.textContent = 'Link copiado!';
+        setTimeout(() => { shareBtn.textContent = 'Compartilhar'; }, 1800);
+      });
+    };
+  }
+  syncAloneButtons();
+}
+
+export function getPublicShareUrl() {
+  const page = location.pathname.split('/').pop() || 'estado.html';
+  const params = new URLSearchParams(location.search);
+  params.delete('framed');
+  const qs = params.toString();
+  const rel = `${page}${qs ? '?' + qs : ''}${location.hash || ''}`;
+  if (/\.run\.app$|^localhost$|^127\.0\.0\.1$/.test(location.hostname)) {
+    return `https://guumachadooo.github.io/usavote/${rel}`;
+  }
+  return new URL(rel, location.href).href;
+}
+
+export function copyTextToClipboard(text) {
+  window.__lastCopiedUrl = text;
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    return navigator.clipboard.writeText(text).catch(() => fallbackCopyText(text));
+  }
+  return fallbackCopyText(text);
+}
+
+function fallbackCopyText(text) {
+  return new Promise(resolve => {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      resolve(true);
+    } catch {
+      resolve(false);
+    }
+  });
+}
+
 function setRace(id) {
   activeId = id;
   const r = races[id];
   activeRace = r;
-  document.getElementById('kicker').textContent = r.label.split(' · ')[0] || `Eleições ${r.year}`;
+  document.getElementById('kicker').textContent = (r.label ? r.label.split(' · ')[0] : '') || `Eleições ${r.year}`;
   document.getElementById('title').textContent =
     `${STATE.name} · ${r.office} ${r.year}` + (r.tag ? ` (${r.tag})` : '');
   document.getElementById('raceLine').textContent =
-    `${r.rep} (PL/Conservador) vs. ${r.dem} (PT/Trabalhista)` + (r.note ? ` — ${r.note}` : '');
+    `${r.rep} vs. ${r.dem}` + (r.note ? ` — ${r.note}` : '');
 
   let maxVotes = 0;
   maxLead = 1;
@@ -472,7 +836,7 @@ function setRace(id) {
   } else {
     document.getElementById('headline').innerHTML = `
       <b class="${winCls}">${winner}</b> venceu em ${STATE.name} por
-      <b>${ (margin * 100).toFixed(1) } pontos</b> (${fmt(lead)} votos),
+      <b>${ (margin * 100).toFixed(1) } pontos</b> (${fmt(lead)} votos de vantagem),
       enquanto o PL levou <b>${rCounties} de ${rCounties + dCounties} ${unitsLow}</b>
       (${ Math.round((rCounties / Math.max(1, rCounties + dCounties)) * 100) }%).
       <div class="big">
@@ -509,16 +873,19 @@ function setRace(id) {
       r: r.seats.R / sTot, d: r.seats.D / sTot, o: 0,
     });
   }
-  document.getElementById('bars').innerHTML = bars.map(b => `
-    <div class="bar-block">
-      <div class="bar-label"><span>${b.label}</span><span>${b.right}</span></div>
-      <div class="bar">
-        <div class="r" style="width:${(b.r * 100).toFixed(2)}%"></div>
-        <div class="o" style="width:${(b.o * 100).toFixed(2)}%"></div>
-        <div class="d" style="width:${(b.d * 100).toFixed(2)}%"></div>
+  document.getElementById('bars').innerHTML = bars.map(b => {
+    const rW = b.r * 100, dW = b.d * 100, oW = b.o * 100;
+    return `
+      <div class="bar-block">
+        <div class="bar-label"><span>${b.label}</span><span>${b.right}</span></div>
+        <div class="bar">
+          <div class="r" style="width:${rW.toFixed(2)}%">${rW >= 18 ? Math.round(rW) + '% PL' : ''}</div>
+          <div class="o" style="width:${oW.toFixed(2)}%"></div>
+          <div class="d" style="width:${dW.toFixed(2)}%">${dW >= 18 ? Math.round(dW) + '% PT' : ''}</div>
+        </div>
       </div>
-    </div>
-  `).join('');
+    `;
+  }).join('');
 
   if (r.isShift && maxShiftR && maxShiftD) {
     document.getElementById('harris').innerHTML =
@@ -535,6 +902,7 @@ function setRace(id) {
   syncUnitAvailability(id);
   if (unitMode === 'precinct') applyPrecinctUnit();
   if (places) places.refresh();
+  renderMunicipalityCard();
   syncUrl();
 }
 
@@ -563,12 +931,18 @@ yearSelect.onchange = () => {
 };
 raceSelect.onchange = () => withBusy('Trocando disputa…', () => setRace(raceSelect.value));
 
-function selectRace(id) {
+function selectRace(id, immediate = false) {
   const r = races[id];
   if (!r) return;
+  activeId = id;
+  activeRace = r;
   yearSelect.value = r.year;
   populateRaceSelect(r.year, id);
-  withBusy('Trocando disputa…', () => setRace(id));
+  if (immediate) {
+    setRace(id);
+  } else {
+    withBusy('Trocando disputa…', () => setRace(id));
+  }
 }
 
 function rowHtml(id, labelCol) {
@@ -634,10 +1008,11 @@ const hashStr = s => { let h = 2166136261; for (let i = 0; i < s.length; i++) h 
 
 function refreshDots(id = activeId) {
   if (viewMode !== 'dots') return;
-  const r = races[id];
+  const r = races[id] || activeRace || races[order[0]];
+  if (!r || !r.counties) return;
   const votesByCounty = counties.map(c => r.counties[c.key] || r.counties[c.name] || [0, 0, 0]);
   dotLayer.setScaleAppearance(dotScale);
-  dotLayer.setRaise(raiseAmount);
+  dotLayer.setRaise(0);
   const busyEl = document.getElementById('busy');
   const busyText = document.getElementById('busyText');
   if (busyText) busyText.textContent = 'Posicionando pontos de eleitores…';
@@ -666,17 +1041,28 @@ function syncUnitAvailability(id = activeId) {
     const ok = viewMode === 'columns' && prCols.hasRace(id);
     sw.style.display = ok ? 'inline-flex' : 'none';
     if (!ok && unitMode === 'precinct') setUnitMode('county');
+    if (isBR && munSearchList && !munSearchList.dataset.hasCities) {
+      const cityNames = prCols.getRawCodes ? prCols.getRawCodes() : [];
+      if (cityNames.length) {
+        munSearchList.dataset.hasCities = '1';
+        const stateNames = counties.map(c => c.name);
+        const allNames = [...new Set([...stateNames, ...cityNames])].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+        munSearchList.innerHTML = allNames.map(n => `<option value="${n.replace(/"/g, '&quot;')}"></option>`).join('');
+      }
+    }
   });
 }
 
 function applyPrecinctUnit() {
   if (!prCols) return;
   prCols.loadOnce().then(() => {
+    if (viewMode !== 'columns' || unitMode !== 'precinct') return;
     const info = prCols.showRace(activeId, raiseAmount, colorByLead);
     if (!info) return;
     setCountyMeshesVisible(false);
-    document.getElementById('scale').textContent =
-      `Cada uma das ${fmt(info.count)} barras é uma zona eleitoral; a altura é proporcional ao total de votos da zona`;
+    document.getElementById('scale').textContent = isBR
+      ? `Cada uma das ${fmt(info.count)} colunas é um município brasileiro (ou região administrativa no DF); a altura reflete o total de votos da cidade`
+      : `Cada uma das ${fmt(info.count)} barras é uma zona eleitoral; a altura é proporcional ao total de votos da zona`;
   });
 }
 
@@ -686,39 +1072,101 @@ function setUnitMode(mode) {
   document.getElementById('unitCounty').classList.toggle('active', mode === 'county');
   document.getElementById('unitPrecinct').classList.toggle('active', mode === 'precinct');
   if (mode === 'precinct') {
-    withBusy('Construindo colunas das zonas eleitorais…', () => applyPrecinctUnit());
+    if (aloneMode && !pinnedPrecinct) {
+      aloneMode = false;
+      prCols.setIsolatedItem(null);
+    }
+    const busyMsg = isBR ? 'Construindo os 5.570 municípios do Brasil em 3D…' : 'Construindo colunas das zonas eleitorais…';
+    withBusy(busyMsg, () => applyPrecinctUnit());
   } else {
-    if (prCols) prCols.setVisible(false);
+    if (prCols) {
+      prCols.setIsolatedItem(null);
+      prCols.setVisible(false);
+    }
+    pinnedPrecinct = null;
     if (viewMode === 'columns') setCountyMeshesVisible(true);
     document.getElementById('scale').textContent = 'A altura é proporcional ao total de votos válidos';
     applyHeights();
   }
+  syncAloneButtons();
   syncUrl();
 }
 
 document.getElementById('unitCounty').onclick = () => setUnitMode('county');
 document.getElementById('unitPrecinct').onclick = () => setUnitMode('precinct');
 
-function setViewMode(mode) {
+let modeFadeTimer = null;
+function setViewMode(mode, immediate = false) {
+  const prevMode = viewMode;
   viewMode = mode;
   const isDots = mode === 'dots';
-  document.getElementById('modeCols').classList.toggle('active', !isDots);
+  document.getElementById('modeCols')?.classList.toggle('active', !isDots);
+  document.getElementById('modeDotsBtn')?.classList.toggle('active', isDots);
+  document.getElementById('viewDots')?.classList.toggle('active', isDots);
+  document.getElementById('viewFlat')?.classList.toggle('active', !isDots && raiseAmount < 0.05);
+  document.getElementById('view3d')?.classList.toggle('active', !isDots && raiseAmount >= 0.05);
+
+  if (modeFadeTimer) {
+    clearTimeout(modeFadeTimer);
+    modeFadeTimer = null;
+  }
+
   const showPrecincts = !isDots && unitMode === 'precinct';
-  setCountyMeshesVisible(!isDots && !showPrecincts);
-  if (prCols) prCols.setVisible(showPrecincts);
-  dotLayer.setVisible(isDots);
+  if (isDots) {
+    dotLayer.setRaise(0);
+    dotLayer.setVisible(true, immediate);
+    refreshDots();
+    if (!immediate && prevMode === 'columns') {
+      // Abaixa suavemente as colunas 3D enquanto os pontos surgem gradualmente
+      for (const c of counties) {
+        c.fromBot = c.lower.scale.y || 0.01;
+        c.fromMid = c.middle.visible ? c.middle.scale.y : 0;
+        c.fromTop = c.mesh.scale.y || 0.29;
+        c.toBot = 0.01;
+        c.toMid = 0;
+        c.toTop = BASE_H - 0.01;
+      }
+      animStart = performance.now();
+      if (prCols && unitMode === 'precinct') prCols.setRaise(0, true);
+      modeFadeTimer = setTimeout(() => {
+        if (viewMode === 'dots') {
+          setCountyMeshesVisible(false);
+          if (prCols) prCols.setVisible(false);
+        }
+      }, 480);
+    } else {
+      setCountyMeshesVisible(false);
+      if (prCols) prCols.setVisible(false);
+    }
+  } else {
+    dotLayer.setVisible(false, immediate);
+    setCountyMeshesVisible(!showPrecincts);
+    if (prCols) {
+      if (showPrecincts) applyPrecinctUnit();
+      else prCols.setVisible(false);
+    }
+    applyHeights();
+  }
+
+  if (cityMarkers) cityMarkers.refreshHeights();
   document.getElementById('dotScalePill').style.display = isDots ? 'flex' : 'none';
   document.getElementById('colorPill').style.display = isDots ? 'none' : 'flex';
   document.getElementById('scale').textContent = isDots
     ? `Cada ponto representa ${fmt(dotScale)} eleitores daquele partido, posicionados dentro de cada zona eleitoral`
     : 'A altura é proporcional ao total de votos válidos';
-  if (isDots) refreshDots();
+  syncTurnVisibility();
   syncUnitAvailability();
+  syncAloneButtons();
   syncUrl();
 }
 
 const modeColsBtn = document.getElementById('modeCols');
 if (modeColsBtn) modeColsBtn.onclick = () => setViewMode('columns');
+const modeDotsBtn = document.getElementById('modeDotsBtn');
+if (modeDotsBtn) modeDotsBtn.onclick = () => setViewMode('dots');
+const viewDotsBtn = document.getElementById('viewDots');
+if (viewDotsBtn) viewDotsBtn.onclick = () => setViewMode('dots');
+
 const dotScaleSel = document.getElementById('dotScale');
 if (dotScaleSel) dotScaleSel.onchange = (e) => {
   dotScale = +e.target.value;
@@ -733,33 +1181,35 @@ const btnFlat = document.getElementById('viewFlat');
 const btn3d = document.getElementById('view3d');
 const turnWrap = document.getElementById('turnWrap');
 const turnSlider = document.getElementById('turn');
-let spinSpeed = 0.25;
+let spinSpeed = isFramed ? 0 : 0.25;
 
 function syncTurnVisibility() {
   if (!turnWrap) return;
-  turnWrap.style.display = raiseAmount > 0.05 ? 'flex' : 'none';
+  turnWrap.style.display = (viewMode === 'columns' && raiseAmount > 0.05) ? 'flex' : 'none';
 }
 
 function setRaise(v) {
+  if (viewMode === 'dots') setViewMode('columns');
   raiseAmount = v;
   raiseSlider.value = Math.round(v * 100);
-  btnFlat.classList.toggle('active', v < 0.05);
-  btn3d.classList.toggle('active', v >= 0.05);
+  btnFlat.classList.toggle('active', viewMode !== 'dots' && v < 0.05);
+  btn3d.classList.toggle('active', viewMode !== 'dots' && v >= 0.05);
+  document.getElementById('viewDots')?.classList.remove('active');
+  if (v < 0.05) aloneMode = false;
   applyHeights();
   dotLayer.setRaise(v);
   syncTurnVisibility();
+  syncAloneButtons();
   syncUrl();
 }
 raiseSlider.oninput = e => setRaise(+e.target.value / 100);
 btnFlat.onclick = () => {
   setRaise(0);
-  camera.position.set(0, 290, 0.01);
-  controls.target.set(0, 0, 0);
+  animateCameraTo(new THREE.Vector3(0, 290, 0.01), new THREE.Vector3(0, 0, 0), 780);
 };
 btn3d.onclick = () => {
   setRaise(1);
-  camera.position.set(0, 215, 225);
-  controls.target.set(0, 0, 6);
+  animateCameraTo(new THREE.Vector3(0, 215, 225), new THREE.Vector3(0, 0, 6), 780);
 };
 if (turnSlider) {
   turnSlider.oninput = e => {
@@ -768,35 +1218,227 @@ if (turnSlider) {
   };
 }
 const leadColorBtn = document.getElementById('leadColor');
-leadColorBtn.onclick = () => {
-  colorByLead = !colorByLead;
-  leadColorBtn.classList.toggle('active', colorByLead);
+const shareColorBtn = document.getElementById('colorShare');
+function setLeadColorMode(byLead) {
+  colorByLead = byLead;
+  leadColorBtn?.classList.toggle('active', colorByLead);
+  shareColorBtn?.classList.toggle('active', !colorByLead);
   withBusy('Recolorindo…', () => {
     applyColors();
     syncUrl();
   });
-};
+}
+if (leadColorBtn) leadColorBtn.onclick = () => setLeadColorMode(true);
+if (shareColorBtn) shareColorBtn.onclick = () => setLeadColorMode(false);
+
+const aloneBtn = document.getElementById('aloneBtn');
+const aloneTopBtn = document.getElementById('aloneTopBtn');
+if (aloneBtn) aloneBtn.onclick = () => toggleAloneMode();
+if (aloneTopBtn) aloneTopBtn.onclick = () => toggleAloneMode();
+
 document.getElementById('reset').onclick = () => {
   userMovedCamera = false;
-  setRaise(1);
-  camera.position.set(0, 215, 225);
-  controls.target.set(0, 0, 6);
+  aloneMode = false;
+  pinnedPrecinct = null;
+  if (prCols) {
+    prCols.setIsolatedItem(null);
+    prCols.highlight(null);
+    prCols.setFilterWinner('all');
+  }
+  filterWinner = 'all';
+  const fw = document.getElementById('filterWinner');
+  if (fw) fw.value = 'all';
   if (places) places.clearAll();
+  const qs = document.getElementById('munQuickSearch');
+  if (qs) qs.value = '';
+  // Preserva o modo atual (2D Plano, 3D, Pontos, Estados ou Municípios) e centraliza com animação fluida
+  applyHeights();
+  const isFlatNow = viewMode !== 'dots' && raiseAmount < 0.05;
+  if (isFlatNow) {
+    animateCameraTo(new THREE.Vector3(0, 290, 0.01), new THREE.Vector3(0, 0, 0), 820);
+  } else {
+    animateCameraTo(new THREE.Vector3(0, 215, 225), new THREE.Vector3(0, 0, 6), 820);
+  }
+  syncAloneButtons();
+  syncUrl();
 };
 
-let pinnedCounty = null;
-function setPinnedHighlight(c) {
+let pinnedTooltipOpen = false;
+
+function buildPrecinctTooltipHtml(pHit, isPinned = false) {
+  const { r, d, o, tot } = pHit;
+  const rPct = tot ? ((r / tot) * 100).toFixed(1) : '0.0';
+  const dPct = tot ? ((d / tot) * 100).toFixed(1) : '0.0';
+  const sign = r >= d ? 'PL+' : 'PT+';
+  const m = (r + d) ? Math.abs(((r - d) / (r + d)) * 100).toFixed(1) : '0.0';
+  const closeHtml = isPinned ? `<button type="button" class="t-close" title="Fechar cartão" aria-label="Fechar">×</button>` : '';
+  const stDrill = isBR ? STATES.find(s => s.slug !== 'br' && s.name.toUpperCase() === String(pHit.county || '').toUpperCase()) : null;
+  const canIsolate = viewMode === 'columns' && unitMode === 'precinct' && raiseAmount >= 0.05;
+  const actionsHtml = isPinned
+    ? `<div class="t-actions">` +
+      (stDrill ? `<button type="button" class="t-drill-btn" data-uf="${stDrill.slug}" data-mun="${pHit.code.replace(/\s*\([A-Z]{2}\)\s*$/, '')}">Ver estado (${stDrill.code}) →</button>` : '') +
+      (canIsolate ? `<button type="button" class="t-alone-btn">${aloneMode ? 'Mostrar todas' : (isBR ? 'Só esta cidade' : 'Só esta zona')}</button>` : '') +
+      `<button type="button" class="t-share-btn" title="Copiar link direto">Copiar link</button>` +
+      `</div>`
+    : '';
+  const titleLine = isBR ? `${pHit.code} · ${pHit.county}` : `${pHit.county} · ${pHit.code}`;
+  return `
+    ${closeHtml}
+    <div class="t-name">${titleLine}</div>
+    <div class="t-row"><span class="rep-t">${fmtCandName(activeRace.rep, 'PL')}</span><span>${fmt(r)} (${rPct}%)</span></div>
+    <div class="t-row"><span class="dem-t">${fmtCandName(activeRace.dem, 'PT')}</span><span>${fmt(d)} (${dPct}%)</span></div>
+    ${o ? `<div class="t-row" style="color:var(--muted)"><span>Outros</span><span>${fmt(o)}</span></div>` : ''}
+    <div class="t-sub">Total ${fmt(tot)} · Margem <b>${sign}${m}%</b> · ${fmt(pHit.reg)} aptos</div>
+    ${actionsHtml}
+  `;
+}
+
+function showPinnedPrecinctTooltip() {
+  if (!pinnedPrecinct || !pinnedTooltipOpen || !activeRace) return;
+  tooltip.innerHTML = buildPrecinctTooltipHtml(pinnedPrecinct, true);
+  tooltip.classList.add('pinned');
+  tooltip.style.display = 'block';
+  const closeBtn = tooltip.querySelector('.t-close');
+  if (closeBtn) {
+    closeBtn.onclick = e => {
+      e.stopPropagation();
+      pinnedTooltipOpen = false;
+      pinnedPrecinct = null;
+      aloneMode = false;
+      if (prCols) {
+        prCols.setIsolatedItem(null);
+        prCols.highlight(null);
+      }
+      syncAloneButtons();
+      tooltip.classList.remove('pinned', 'side-right', 'side-left', 'side-top');
+      tooltip.style.display = 'none';
+    };
+  }
+  const aloneAct = tooltip.querySelector('.t-alone-btn');
+  if (aloneAct) {
+    aloneAct.onclick = e => {
+      e.stopPropagation();
+      toggleAloneMode();
+      showPinnedPrecinctTooltip();
+    };
+  }
+  const shareAct = tooltip.querySelector('.t-share-btn');
+  if (shareAct) {
+    shareAct.onclick = e => {
+      e.stopPropagation();
+      syncUrl();
+      copyTextToClipboard(getPublicShareUrl()).then(() => {
+        shareAct.textContent = 'Link copiado!';
+        setTimeout(() => {
+          if (shareAct.isConnected) shareAct.textContent = 'Copiar link';
+        }, 1600);
+      });
+    };
+  }
+  const drillAct = tooltip.querySelector('.t-drill-btn');
+  if (drillAct && drillAct.dataset.uf) {
+    drillAct.onclick = e => {
+      e.stopPropagation();
+      const munQ = drillAct.dataset.mun ? `&mun=${encodeURIComponent(drillAct.dataset.mun)}` : '';
+      location.href = `estado.html?uf=${drillAct.dataset.uf}${munQ}${isFramed ? '&framed=1' : ''}`;
+    };
+  }
+  updatePinnedTooltipPosition();
+}
+
+function selectPrecinctItem(pHit, fly = false) {
+  pinnedPrecinct = pHit;
+  pinnedTooltipOpen = !!pHit;
+  if (!pHit) aloneMode = false;
+  if (prCols) {
+    prCols.highlight(pHit);
+    if (!pHit) prCols.setIsolatedItem(null);
+  }
+  const qs = document.getElementById('munQuickSearch');
+  if (qs && pHit) qs.value = pHit.code;
+  syncAloneButtons();
+  if (pHit) {
+    showPinnedPrecinctTooltip();
+    if (fly) frameCountyColumn(pHit);
+  } else {
+    tooltip.classList.remove('pinned', 'side-right', 'side-left', 'side-top');
+    tooltip.style.display = 'none';
+  }
+}
+
+function showPinnedTooltip() {
+  if (!pinnedCounty || !pinnedTooltipOpen || !activeRace) return;
+  tooltip.innerHTML = buildCountyTooltipHtml(pinnedCounty, true);
+  tooltip.classList.add('pinned');
+  tooltip.style.display = 'block';
+  const closeBtn = tooltip.querySelector('.t-close');
+  if (closeBtn) {
+    closeBtn.onclick = e => {
+      e.stopPropagation();
+      pinnedTooltipOpen = false;
+      tooltip.classList.remove('pinned', 'side-right', 'side-left', 'side-top');
+      tooltip.style.display = 'none';
+    };
+  }
+  const aloneAct = tooltip.querySelector('.t-alone-btn');
+  if (aloneAct) {
+    aloneAct.onclick = e => {
+      e.stopPropagation();
+      toggleAloneMode();
+      showPinnedTooltip();
+    };
+  }
+  const shareAct = tooltip.querySelector('.t-share-btn');
+  if (shareAct) {
+    shareAct.onclick = e => {
+      e.stopPropagation();
+      syncUrl();
+      copyTextToClipboard(getPublicShareUrl()).then(() => {
+        shareAct.textContent = 'Link copiado!';
+        setTimeout(() => {
+          if (shareAct.isConnected) shareAct.textContent = 'Copiar link';
+        }, 1600);
+      });
+    };
+  }
+  const drillAct = tooltip.querySelector('.t-drill-btn');
+  if (drillAct && drillAct.dataset.uf) {
+    drillAct.onclick = e => {
+      e.stopPropagation();
+      const nextUrl = `estado.html?uf=${drillAct.dataset.uf}${isFramed ? '&framed=1' : ''}`;
+      location.href = nextUrl;
+    };
+  }
+  updatePinnedTooltipPosition();
+}
+
+function setPinnedHighlight(c, meta = null) {
   if (pinnedCounty && pinnedCounty !== c) {
     pinnedCounty.mat.emissive.setHex(0x000000);
     pinnedCounty.lowerMat.emissive.setHex(0x000000);
   }
   pinnedCounty = c;
+  pinnedMeta = meta;
+  pinnedTooltipOpen = !!c;
+  if (!c) aloneMode = false;
   if (c) {
     c.mat.emissive.setHex(0x28220f);
     c.lowerMat.emissive.setHex(0x28220f);
   }
+  const qs = document.getElementById('munQuickSearch');
+  if (qs) qs.value = c ? c.name : '';
   const idx = c ? counties.indexOf(c) : null;
   dotLayer.setHover(idx);
+  applyHeights();
+  renderMunicipalityCard();
+  syncAloneButtons();
+  syncUrl();
+  if (c) showPinnedTooltip();
+  else {
+    tooltip.classList.remove('pinned', 'side-right', 'side-left', 'side-top');
+    tooltip.style.display = 'none';
+  }
+  if (aloneMode && c) frameCountyColumn(c);
 }
 
 const places = createPlaceFinder({
@@ -805,8 +1447,10 @@ const places = createPlaceFinder({
   cityUrl: STATE.data.cities,
   precinctUrl: STATE.data.precincts,
   precinctShapesUrl: STATE.data.precinctShapes,
-  onSelectCounty: c => setPinnedHighlight(c),
-  onClearCounty: () => setPinnedHighlight(null),
+  onSelectCounty: (c, meta) => setPinnedHighlight(c, meta),
+  onClearCounty: () => {
+    setPinnedHighlight(null, null);
+  },
   onSelectPrecinct: key => prCols ? prCols.highlight(key) : false,
   getRaceInfo: () => ({
     raceKey: activeId,
@@ -827,18 +1471,6 @@ function setHoverHighlight(c, on) {
   c.mat.emissive.setHex(hex);
   c.lowerMat.emissive.setHex(hex);
 }
-
-let downXY = null;
-renderer.domElement.addEventListener('pointerdown', e => {
-  downXY = [e.clientX, e.clientY];
-});
-renderer.domElement.addEventListener('pointerup', e => {
-  if (!downXY) return;
-  const dx = e.clientX - downXY[0], dy = e.clientY - downXY[1];
-  downXY = null;
-  if (dx * dx + dy * dy > 25) return;
-  if (hovered && places) places.pickCountyFromMap(hovered);
-});
 
 const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -BASE_H);
 const hitPt = new THREE.Vector3();
@@ -862,7 +1494,168 @@ function findCountyAt(x, y) {
   return null;
 }
 
+const fmtCandName = (name, party) => {
+  if (!name) return party;
+  return name.includes('(') ? name : `${name} (${party})`;
+};
+
+function buildCountyTooltipHtml(c, isPinned = false) {
+  const { r, d, o, tot, m, shift, baseM, curM } = c.cur;
+  const rPct = tot ? ((r / tot) * 100).toFixed(1) : '0.0';
+  const dPct = tot ? ((d / tot) * 100).toFixed(1) : '0.0';
+  const closeHtml = isPinned ? `<button type="button" class="t-close" title="Fechar cartão" aria-label="Fechar">×</button>` : '';
+  const canIsolate = viewMode === 'columns' && unitMode === 'county' && raiseAmount >= 0.05;
+  const stDrill = isBR ? STATES.find(s => s.slug !== 'br' && s.name.toUpperCase() === c.key) : null;
+  const actionsHtml = isPinned
+    ? `<div class="t-actions">` +
+      (stDrill ? `<button type="button" class="t-drill-btn" data-uf="${stDrill.slug}">Ver municípios 3D →</button>` : '') +
+      (canIsolate ? `<button type="button" class="t-alone-btn">${aloneMode ? 'Mostrar todos' : `Só este ${unitLow}`}</button>` : '') +
+      `<button type="button" class="t-share-btn" title="Copiar link do GitHub Pages para este ${unitLow}">Copiar link</button>` +
+      `</div>`
+    : '';
+  if (activeRace.isShift) {
+    const sPts = (shift * 100);
+    const sSign = sPts >= 0 ? `PL+${sPts.toFixed(1)}` : `PT+${(-sPts).toFixed(1)}`;
+    const bSign = baseM >= 0 ? `PL+${baseM.toFixed(1)}` : `PT+${(-baseM).toFixed(1)}`;
+    const cSign = curM  >= 0 ? `PL+${curM.toFixed(1)}`  : `PT+${(-curM).toFixed(1)}`;
+    return `
+      ${closeHtml}
+      <div class="t-name">${UNIT_CAP} de ${c.name}</div>
+      <div class="t-row"><span>Mudança desde ${baseLabel}</span><b>${sSign} pts</b></div>
+      <div class="t-row" style="color:var(--muted)"><span>${baseLabel} (${STATE.base.rep}/${STATE.base.dem})</span><span>${bSign}%</span></div>
+      <div class="t-row" style="color:var(--muted)"><span>${activeRace.year} (${activeRace.rep}/${activeRace.dem})</span><span>${cSign}%</span></div>
+      <div class="t-sub">Votos em ${activeRace.year}: ${fmt(tot)}</div>
+      ${actionsHtml}
+    `;
+  }
+  const sign = m >= 0 ? 'PL+' : 'PT+';
+  return `
+    ${closeHtml}
+    <div class="t-name">${UNIT_CAP} de ${c.name}</div>
+    <div class="t-row"><span class="rep-t">${fmtCandName(activeRace.rep, 'PL')}</span><span>${fmt(r)} (${rPct}%)</span></div>
+    <div class="t-row"><span class="dem-t">${fmtCandName(activeRace.dem, 'PT')}</span><span>${fmt(d)} (${dPct}%)</span></div>
+    ${o ? `<div class="t-row" style="color:var(--muted)"><span>Outros</span><span>${fmt(o)}</span></div>` : ''}
+    <div class="t-sub">Total ${fmt(tot)} · Margem <b>${sign}${Math.abs(m).toFixed(1)}%</b></div>
+    ${actionsHtml}
+  `;
+}
+
+const _projVec = new THREE.Vector3();
+function updatePinnedTooltipPosition() {
+  const targetObj = (unitMode === 'precinct' && pinnedPrecinct) ? pinnedPrecinct : pinnedCounty;
+  if (!targetObj || !pinnedTooltipOpen || hovered) return;
+  if (!tooltip.classList.contains('pinned') || tooltip.style.display === 'none') return;
+  const stageRect = stage.getBoundingClientRect();
+  if (stageRect.width < 10 || stageRect.height < 10) return;
+
+  const anchorY = (viewMode === 'dots' || raiseAmount < 0.05)
+    ? BASE_H
+    : Math.max(BASE_H, (targetObj.currentH || BASE_H) * 0.55);
+  _projVec.set(targetObj.cx, anchorY, -targetObj.cy);
+  _projVec.project(camera);
+
+  if (_projVec.z > 1) {
+    tooltip.style.opacity = '0';
+    return;
+  }
+  tooltip.style.opacity = '1';
+
+  const sx = stageRect.left + (_projVec.x * 0.5 + 0.5) * stageRect.width;
+  const sy = stageRect.top + (-_projVec.y * 0.5 + 0.5) * stageRect.height;
+
+  const tw = tooltip.offsetWidth || 224;
+  const th = tooltip.offsetHeight || 112;
+
+  const controlsEl = document.querySelector('.map-area .controls');
+  const controlsTop = (controlsEl && controlsEl.offsetParent !== null)
+    ? controlsEl.getBoundingClientRect().top
+    : (stageRect.bottom - 10);
+  const minTop = stageRect.top + 10;
+  const maxTop = Math.max(minTop, Math.min(stageRect.bottom - th - 10, controlsTop - th - 12));
+
+  const gap = 22;
+  const roomRight = (stageRect.right - 10) - (sx + gap);
+  const roomLeft = (sx - gap) - (stageRect.left + 10);
+
+  tooltip.classList.remove('side-right', 'side-left', 'side-top');
+
+  let left, top;
+  if (roomRight >= tw || (roomRight >= roomLeft && roomRight >= 170)) {
+    left = Math.min(stageRect.right - tw - 10, sx + gap);
+    top = Math.max(minTop, Math.min(maxTop, sy - th * 0.5));
+    tooltip.classList.add('side-right');
+    const arrowY = Math.max(14, Math.min(th - 14, sy - top));
+    tooltip.style.setProperty('--arrow-y', `${arrowY}px`);
+  } else if (roomLeft >= 170) {
+    left = Math.max(stageRect.left + 10, sx - tw - gap);
+    top = Math.max(minTop, Math.min(maxTop, sy - th * 0.5));
+    tooltip.classList.add('side-left');
+    const arrowY = Math.max(14, Math.min(th - 14, sy - top));
+    tooltip.style.setProperty('--arrow-y', `${arrowY}px`);
+  } else {
+    left = Math.max(stageRect.left + 10, Math.min(stageRect.right - tw - 10, sx - tw * 0.5));
+    top = Math.max(minTop, Math.min(maxTop, sy - th - 18));
+    tooltip.classList.add('side-top');
+    const arrowX = Math.max(18, Math.min(tw - 18, sx - left));
+    tooltip.style.setProperty('--arrow-x', `${arrowX}px`);
+  }
+
+  tooltip.style.left = `${Math.round(left)}px`;
+  tooltip.style.top = `${Math.round(top)}px`;
+}
+
+function raycastCounty(clientX, clientY) {
+  const rect = renderer.domElement.getBoundingClientRect();
+  pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+  pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+  raycaster.setFromCamera(pointer, camera);
+  if (cityMarkers) {
+    const pinHit = cityMarkers.raycast(raycaster);
+    if (pinHit) return pinHit;
+  }
+  if (viewMode === 'columns') {
+    const hits = raycaster.intersectObjects(group.children, false);
+    const hit = hits.find(h => meshToCounty.has(h.object));
+    if (hit) return meshToCounty.get(hit.object);
+  } else if (raycaster.ray.intersectPlane(groundPlane, hitPt)) {
+    return findCountyAt(hitPt.x, -hitPt.z);
+  }
+  return null;
+}
+
+let downXY = null;
+renderer.domElement.addEventListener('pointerdown', e => {
+  downXY = [e.clientX, e.clientY];
+});
+renderer.domElement.addEventListener('pointerup', e => {
+  if (!downXY) return;
+  const dx = e.clientX - downXY[0], dy = e.clientY - downXY[1];
+  downXY = null;
+  if (dx * dx + dy * dy > 25) return;
+  if (viewMode === 'columns' && unitMode === 'precinct' && prCols) {
+    const rect = renderer.domElement.getBoundingClientRect();
+    pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+    pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+    raycaster.setFromCamera(pointer, camera);
+    const pHit = prCols.raycast(raycaster);
+    if (pHit) {
+      selectPrecinctItem(pHit, false);
+      return;
+    }
+  }
+  const hitC = hovered || raycastCounty(e.clientX, e.clientY);
+  if (hitC && places) {
+    if (hovered) {
+      setHoverHighlight(hovered, false);
+      hovered = null;
+    }
+    places.pickCountyFromMap(hitC);
+    showPinnedTooltip();
+  }
+});
+
 renderer.domElement.addEventListener('pointermove', e => {
+  if (e.pointerType === 'touch') return;
   const rect = renderer.domElement.getBoundingClientRect();
   pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
   pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
@@ -870,104 +1663,296 @@ renderer.domElement.addEventListener('pointermove', e => {
 
   if (viewMode === 'columns' && unitMode === 'precinct' && prCols) {
     const pHit = prCols.raycast(raycaster);
-    if (pHit) {
+    if (pHit && pHit !== pinnedPrecinct) {
+      hovered = pHit;
+      tooltip.classList.remove('pinned', 'side-right', 'side-left', 'side-top');
+      tooltip.style.opacity = '1';
       tooltip.style.display = 'block';
-      tooltip.style.left = (e.clientX + 14) + 'px';
-      tooltip.style.top = (e.clientY + 14) + 'px';
-      const { r, d, o, tot } = pHit;
-      const rPct = tot ? ((r / tot) * 100).toFixed(1) : '0.0';
-      const dPct = tot ? ((d / tot) * 100).toFixed(1) : '0.0';
-      const sign = r >= d ? 'PL+' : 'PT+';
-      const m = (r + d) ? Math.abs(((r - d) / (r + d)) * 100).toFixed(1) : '0.0';
-      tooltip.innerHTML = `
-        <div class="t-name">${pHit.county} · Zona ${pHit.code}</div>
-        <div class="t-row"><span class="rep-t">${activeRace.rep} (PL)</span><span>${fmt(r)} (${rPct}%)</span></div>
-        <div class="t-row"><span class="dem-t">${activeRace.dem} (PT)</span><span>${fmt(d)} (${dPct}%)</span></div>
-        ${o ? `<div class="t-row" style="color:var(--muted)"><span>Outros</span><span>${fmt(o)}</span></div>` : ''}
-        <div class="t-sub">Total ${fmt(tot)} · Margem <b>${sign}${m}%</b> · ${fmt(pHit.reg)} eleitores aptos</div>
-      `;
+      const controlsEl = document.querySelector('.map-area .controls');
+      const maxY = (controlsEl ? controlsEl.getBoundingClientRect().top : window.innerHeight - 76) - 135;
+      tooltip.style.left = Math.min(window.innerWidth - 260, e.clientX + 14) + 'px';
+      tooltip.style.top = Math.min(maxY, e.clientY + 14) + 'px';
+      tooltip.innerHTML = buildPrecinctTooltipHtml(pHit, false);
       return;
     }
-    tooltip.style.display = 'none';
+    hovered = null;
+    if (pinnedPrecinct && pinnedTooltipOpen) showPinnedPrecinctTooltip();
+    else if (pinnedCounty && pinnedTooltipOpen) showPinnedTooltip();
+    else tooltip.style.display = 'none';
     return;
   }
 
   let c = null;
-  if (viewMode === 'columns') {
-    const hits = raycaster.intersectObjects(group.children, false);
-    const hit = hits.find(h => meshToCounty.has(h.object));
-    if (hit) c = meshToCounty.get(hit.object);
-  } else {
-    if (raycaster.ray.intersectPlane(groundPlane, hitPt)) {
-      c = findCountyAt(hitPt.x, -hitPt.z);
+  if (cityMarkers) {
+    c = cityMarkers.raycast(raycaster);
+  }
+  if (!c) {
+    if (viewMode === 'columns') {
+      const hits = raycaster.intersectObjects(group.children, false);
+      const hit = hits.find(h => meshToCounty.has(h.object));
+      if (hit) c = meshToCounty.get(hit.object);
+    } else {
+      if (raycaster.ray.intersectPlane(groundPlane, hitPt)) {
+        c = findCountyAt(hitPt.x, -hitPt.z);
+      }
     }
   }
 
-  if (c) {
+  if (c && c !== pinnedCounty) {
     if (hovered !== c) {
       if (hovered) setHoverHighlight(hovered, false);
       hovered = c;
       setHoverHighlight(hovered, true);
       if (!pinnedCounty) dotLayer.setHover(counties.indexOf(c));
     }
-    const { r, d, o, tot, m, shift, baseM, curM } = c.cur;
-    const rPct = tot ? ((r / tot) * 100).toFixed(1) : '0.0';
-    const dPct = tot ? ((d / tot) * 100).toFixed(1) : '0.0';
+    tooltip.classList.remove('pinned', 'side-right', 'side-left', 'side-top');
+    tooltip.style.opacity = '1';
     tooltip.style.display = 'block';
-    tooltip.style.left = (e.clientX + 14) + 'px';
-    tooltip.style.top = (e.clientY + 14) + 'px';
-    if (activeRace.isShift) {
-      const sPts = (shift * 100);
-      const sSign = sPts >= 0 ? `PL+${sPts.toFixed(1)}` : `PT+${(-sPts).toFixed(1)}`;
-      const bSign = baseM >= 0 ? `PL+${baseM.toFixed(1)}` : `PT+${(-baseM).toFixed(1)}`;
-      const cSign = curM  >= 0 ? `PL+${curM.toFixed(1)}`  : `PT+${(-curM).toFixed(1)}`;
-      tooltip.innerHTML = `
-        <div class="t-name">${UNIT_CAP} de ${c.name}</div>
-        <div class="t-row"><span>Mudança desde ${baseLabel}</span><b>${sSign} pts</b></div>
-        <div class="t-row" style="color:var(--muted)"><span>${baseLabel} (${STATE.base.rep}/${STATE.base.dem})</span><span>${bSign}%</span></div>
-        <div class="t-row" style="color:var(--muted)"><span>${activeRace.year} (${activeRace.rep}/${activeRace.dem})</span><span>${cSign}%</span></div>
-        <div class="t-sub">Votos em ${activeRace.year}: ${fmt(tot)}</div>
-      `;
-    } else {
-      const sign = m >= 0 ? 'PL+' : 'PT+';
-      tooltip.innerHTML = `
-        <div class="t-name">${UNIT_CAP} de ${c.name}</div>
-        <div class="t-row"><span class="rep-t">${activeRace.rep} (PL)</span><span>${fmt(r)} (${rPct}%)</span></div>
-        <div class="t-row"><span class="dem-t">${activeRace.dem} (PT)</span><span>${fmt(d)} (${dPct}%)</span></div>
-        ${o ? `<div class="t-row" style="color:var(--muted)"><span>Outros</span><span>${fmt(o)}</span></div>` : ''}
-        <div class="t-sub">Total ${fmt(tot)} · Margem <b>${sign}${Math.abs(m).toFixed(1)}%</b></div>
-      `;
-    }
+    const controlsEl = document.querySelector('.map-area .controls');
+    const maxY = (controlsEl ? controlsEl.getBoundingClientRect().top : window.innerHeight - 76) - 135;
+    tooltip.style.left = Math.min(window.innerWidth - 260, e.clientX + 14) + 'px';
+    tooltip.style.top = Math.min(maxY, e.clientY + 14) + 'px';
+    tooltip.innerHTML = buildCountyTooltipHtml(c, false);
   } else {
     if (hovered) setHoverHighlight(hovered, false);
     hovered = null;
     if (!pinnedCounty) dotLayer.setHover(null);
-    tooltip.style.display = 'none';
+    if (pinnedCounty && pinnedTooltipOpen) {
+      showPinnedTooltip();
+    } else {
+      tooltip.style.display = 'none';
+    }
   }
 });
 renderer.domElement.addEventListener('pointerleave', () => {
   if (hovered) setHoverHighlight(hovered, false);
   hovered = null;
   if (!pinnedCounty) dotLayer.setHover(null);
-  tooltip.style.display = 'none';
+  if (pinnedCounty && pinnedTooltipOpen) {
+    showPinnedTooltip();
+  } else {
+    tooltip.style.display = 'none';
+  }
 });
 
 function resize() {
-  const w = stage.clientWidth, h = stage.clientHeight;
+  const w = Math.max(1, stage.clientWidth), h = Math.max(1, stage.clientHeight);
   renderer.setSize(w, h);
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
   dotLayer.onResize();
 }
 window.addEventListener('resize', resize);
+if (typeof ResizeObserver !== 'undefined') {
+  new ResizeObserver(() => resize()).observe(stage);
+}
 resize();
+
+// Botões Ocultar Painel / Detalhes (idênticos ao usavote original)
+const panelCloseBtn = document.getElementById('panelClose');
+const panelToggleBtn = document.getElementById('panelToggle');
+if (panelCloseBtn) {
+  panelCloseBtn.onclick = () => {
+    document.body.classList.add('panel-hidden');
+    resize();
+  };
+}
+if (panelToggleBtn) {
+  panelToggleBtn.onclick = () => {
+    document.body.classList.remove('panel-hidden');
+    resize();
+  };
+}
+
+// Guia Rápido ("Como ler este mapa em 10 segundos")
+const quickGuideCard = document.getElementById('quickGuideCard');
+const qgCloseBtn = document.getElementById('qgCloseBtn');
+const qgGoAdvanced = document.getElementById('qgGoAdvanced');
+try {
+  if (localStorage.getItem('brvote_hide_guide') === '1' && quickGuideCard) {
+    quickGuideCard.style.display = 'none';
+  }
+} catch {}
+if (qgCloseBtn && quickGuideCard) {
+  qgCloseBtn.onclick = () => {
+    quickGuideCard.style.display = 'none';
+    try { localStorage.setItem('brvote_hide_guide', '1'); } catch {}
+  };
+}
+if (qgGoAdvanced) {
+  qgGoAdvanced.onclick = () => {
+    if (window.setBrVoteUiMode) {
+      window.setBrVoteUiMode('advanced');
+    } else {
+      document.body.classList.remove('ui-simple');
+      document.body.classList.add('ui-advanced');
+      try { localStorage.setItem('brvote_ui_mode', 'advanced'); } catch {}
+      document.querySelectorAll('.ui-mode-btn').forEach(b => {
+        const on = b.dataset.uimode === 'advanced';
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-pressed', on ? 'true' : 'false');
+      });
+    }
+    resize();
+  };
+}
+
+window.addEventListener('brvote-uimode', e => {
+  const mode = e.detail && e.detail.mode;
+  if (mode === 'simple' && filterWinner !== 'all') {
+    filterWinner = 'all';
+    const fw = document.getElementById('filterWinner');
+    if (fw) fw.value = 'all';
+    applyHeights();
+  }
+  resize();
+});
+
+// Busca Instantânea de Município / Cidade (#munQuickSearch + #munSearchList)
+const munQuickSearch = document.getElementById('munQuickSearch');
+const munSearchList = document.getElementById('munSearchList');
+if (munSearchList && counties.length) {
+  const sortedNames = counties.map(c => c.name).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  munSearchList.innerHTML = sortedNames.map(n => `<option value="${n.replace(/"/g, '&quot;')}"></option>`).join('');
+}
+if (munQuickSearch && places) {
+  const normSearch = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+  const trySelectMun = (raw, fly) => {
+    const q = normSearch(raw);
+    if (!q) return false;
+    // Se estamos na visão de 5.570 cidades do Brasil, busca também entre os municípios
+    if (isBR && unitMode === 'precinct' && prCols) {
+      const pMatch = prCols.findItemByQuery(raw);
+      if (pMatch && (normSearch(pMatch.code) === q || (fly && q.length >= 4))) {
+        selectPrecinctItem(pMatch, fly);
+        return true;
+      }
+    }
+    const exact = counties.find(c => normSearch(c.name) === q);
+    if (exact) {
+      places.selectCountyByName(exact.name, fly);
+      return true;
+    }
+    if (fly && q.length >= 3) {
+      const partial = counties.find(c => normSearch(c.name).startsWith(q)) ||
+                      counties.find(c => normSearch(c.name).includes(q));
+      if (partial) {
+        munQuickSearch.value = partial.name;
+        places.selectCountyByName(partial.name, true);
+        return true;
+      }
+      if (isBR && prCols) {
+        const pPartial = prCols.findItemByQuery(raw);
+        if (pPartial) {
+          if (unitMode !== 'precinct') setUnitMode('precinct');
+          selectPrecinctItem(pPartial, true);
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+  munQuickSearch.addEventListener('input', () => {
+    trySelectMun(munQuickSearch.value, true);
+  });
+  munQuickSearch.addEventListener('keydown', e => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      trySelectMun(munQuickSearch.value, true);
+    } else if (e.key === 'Escape') {
+      munQuickSearch.value = '';
+      places.clear();
+      if (pinnedPrecinct) selectPrecinctItem(null, false);
+    }
+  });
+}
+
+const scrollToAsideBtn = document.getElementById('scrollToAsideBtn');
+if (scrollToAsideBtn) {
+  scrollToAsideBtn.onclick = () => {
+    const asideEl = document.querySelector('aside');
+    if (asideEl) asideEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+}
+
+// Barra de Personalização Avançada (#filterWinner e #mapThemeSelect)
+const filterWinnerSel = document.getElementById('filterWinner');
+if (filterWinnerSel) {
+  filterWinnerSel.onchange = () => {
+    filterWinner = filterWinnerSel.value || 'all';
+    if (prCols) prCols.setFilterWinner(filterWinner);
+    applyHeights();
+  };
+}
+const mapThemeSel = document.getElementById('mapThemeSelect');
+if (mapThemeSel) {
+  mapThemeSel.onchange = () => {
+    const val = mapThemeSel.value;
+    document.body.classList.remove('theme-contrast', 'theme-light');
+    if (val === 'contrast') {
+      document.body.classList.add('theme-contrast');
+      scene.background = new THREE.Color(0x03070b);
+      baseMesh.material.color.setHex(0x060d14);
+      edgeMat.color.setHex(0x1e2c44);
+    } else if (val === 'light') {
+      document.body.classList.add('theme-light');
+      scene.background = new THREE.Color(0xeef4f0);
+      baseMesh.material.color.setHex(0xdce6df);
+      edgeMat.color.setHex(0x8da399);
+    } else {
+      scene.background = new THREE.Color(0x07131a);
+      baseMesh.material.color.setHex(0x0a1922);
+      edgeMat.color.setHex(0x162b38);
+    }
+  };
+}
+
+// Sincronização de câmera com compare.html via postMessage (PR #13)
+let suppressCamBroadcast = false;
+let canBroadcastCam = false;
+renderer.domElement.addEventListener('pointerdown', () => { canBroadcastCam = true; });
+renderer.domElement.addEventListener('wheel', () => { canBroadcastCam = true; }, { passive: true });
+renderer.domElement.addEventListener('touchstart', () => { canBroadcastCam = true; }, { passive: true });
+
+if (window.parent && window.parent !== window) {
+  controls.addEventListener('change', () => {
+    if (suppressCamBroadcast || !canBroadcastCam) return;
+    window.parent.postMessage({
+      type: 'cam',
+      px: camera.position.x,
+      py: camera.position.y,
+      pz: camera.position.z,
+      tx: controls.target.x,
+      ty: controls.target.y,
+      tz: controls.target.z,
+    }, '*');
+  });
+  window.addEventListener('message', e => {
+    const d = e.data;
+    if (!d) return;
+    if (d.type === 'forceResize') {
+      resize();
+      renderer.render(scene, camera);
+      return;
+    }
+    if (d.type !== 'setCam') return;
+    suppressCamBroadcast = true;
+    userMovedCamera = true;
+    camera.position.set(d.px, d.py, d.pz);
+    controls.target.set(d.tx, d.ty, d.tz);
+    controls.update();
+    suppressCamBroadcast = false;
+  });
+}
+setTimeout(() => resize(), 120);
+setTimeout(() => resize(), 400);
 
 let lastFrame = performance.now();
 function tick(now) {
   const dt = Math.min(0.05, (now - lastFrame) / 1000);
   lastFrame = now;
-  const t = Math.min(1, (now - animStart) / 420);
-  const ease = 1 - Math.pow(1 - t, 3);
+  const t = Math.min(1, (now - animStart) / 620);
+  const ease = easeQuint(t);
   for (const c of counties) {
     const bot = c.fromBot + (c.toBot - c.fromBot) * ease;
     const mid = c.fromMid + (c.toMid - c.fromMid) * ease;
@@ -984,7 +1969,16 @@ function tick(now) {
     c.mesh.scale.y = top;
     c.currentH = bot + mid + top;
   }
-  if (!userMovedCamera && spinSpeed > 0 && raiseAmount > 0.05) {
+  if (prCols) prCols.tick(now);
+  dotLayer.tick(dt);
+  if (cityMarkers) cityMarkers.refreshHeights();
+  if (camAnim) {
+    const u = Math.min(1, (now - camAnim.t0) / camAnim.dur);
+    const k = easeQuint(u);
+    camera.position.lerpVectors(camAnim.fromPos, camAnim.toPos, k);
+    controls.target.lerpVectors(camAnim.fromTarget, camAnim.toTarget, k);
+    if (u >= 1) camAnim = null;
+  } else if (!userMovedCamera && spinSpeed > 0 && raiseAmount > 0.05 && viewMode === 'columns') {
     const off = camera.position.clone().sub(controls.target);
     off.applyAxisAngle(new THREE.Vector3(0, 1, 0), spinSpeed * 0.45 * dt);
     camera.position.copy(controls.target).add(off);
@@ -992,33 +1986,51 @@ function tick(now) {
   controls.update();
   if (cityMarkers) cityMarkers.updateFade(camera);
   renderer.render(scene, camera);
+  updatePinnedTooltipPosition();
   requestAnimationFrame(tick);
 }
 
-const initParams = new URLSearchParams(location.search);
 const wantRace = initParams.get('race');
 const wantVoters = initParams.get('voters');
-const wantFlat = initParams.get('flat') === '1';
+const wantLook = initParams.get('look');
+const wantFlat = initParams.get('flat') === '1' || wantLook === 'flat';
 const wantUnit = initParams.get('unit');
-const wantMarginColor = initParams.get('color') === 'margin';
+const wantMarginColor = initParams.get('color') === 'margin' || isFramed;
+const wantMun = initParams.get('mun');
+const wantAlone = initParams.get('alone') === '1';
 
-if (wantMarginColor) {
+if (wantMarginColor && initParams.get('color') !== 'lead') {
   colorByLead = false;
-  leadColorBtn.classList.remove('active');
+  leadColorBtn?.classList.remove('active');
+  shareColorBtn?.classList.add('active');
 }
 const initRace = (wantRace && races[wantRace]) ? wantRace : (STATE.defaultRace && races[STATE.defaultRace] ? STATE.defaultRace : order[0]);
-selectRace(initRace);
-if (wantVoters) {
+selectRace(initRace, true);
+if (wantVoters || wantLook === 'dots') {
   const s = +wantVoters;
   if ([10, 25, 100, 250, 1000].includes(s)) {
     dotScale = s;
     document.getElementById('dotScale').value = String(s);
   }
-  setViewMode('dots');
+  setViewMode('dots', true);
 } else if (wantUnit === 'precinct') {
   setUnitMode('precinct');
 }
-if (wantFlat) btnFlat.click();
+if (wantFlat) {
+  setRaise(0);
+  camera.position.set(0, 290, 0.01);
+  controls.target.set(0, 0, 0);
+  controls.update();
+}
+if (wantMun && places) {
+  places.selectCountyByName(wantMun, true);
+  if (wantAlone && pinnedCounty) {
+    aloneMode = true;
+    syncAloneButtons();
+    applyHeights();
+    frameCountyColumn(pinnedCounty);
+  }
+}
 syncTurnVisibility();
 
 requestAnimationFrame(tick);

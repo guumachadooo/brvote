@@ -94,6 +94,7 @@ let activePins = [];
 
 function rebuildPins() {
   callouts.innerHTML = '';
+  map.setPins(PINS);
   activePins = PINS.map(p => {
     const c = map.getCounty(p.county);
     if (!c) return null;
@@ -149,9 +150,9 @@ liftBtn.onclick = () => {
     split: false,
   });
   map.setCamera(lifted
-    ? { pos: [14, 185, 215], target: [4, 10, 6] }
-    : { pos: [0, 285, 0.01], target: [0, 0, 0] });
+    ? { pos: [14, 215, 252], target: [4, 10, 6] }
+    : { pos: [0, 325, 0.01], target: [0, 0, 0] });
 };
 
 apply();
-map.setCamera({ pos: [0, 285, 0.01], target: [0, 0, 0], dur: 0 });
+map.setCamera({ pos: [0, 325, 0.01], target: [0, 0, 0], dur: 0 });

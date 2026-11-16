@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { STATES, getState } from '../state.js';
 import { computeMargin, marginColor, voteLeadColor, PT_RED, PL_BLUE } from '../colors.js';
+import { computeInteriorPoint, computeCalloutPlacements } from '../callout-logic.js';
 
 test('Color encoding: PT (red) vs PL (blue) margins and vote-lead shading', () => {
   assert.equal(computeMargin(600, 400, 0), 0.2);
@@ -20,15 +21,49 @@ test('Color encoding: PT (red) vs PL (blue) margins and vote-lead shading', () =
   assert.notEqual(leadSmall, leadLarge);
 });
 
-test('All 27 Brazilian UFs are configured in state.js with original usavote schema', () => {
-  assert.equal(STATES.length, 27);
+test('All 27 Brazilian UFs and national Brasil entry are configured in state.js with clean naming', () => {
+  assert.equal(STATES.length, 28);
+  assert.equal(getState('br').name, 'Brasil');
   for (const st of STATES) {
     assert.ok(st.slug, 'state has slug');
     assert.ok(st.results && st.results.href, `state ${st.slug} has results.href`);
     assert.ok(st.dots, `state ${st.slug} has dots link`);
-    assert.ok(Array.isArray(st.flights) && st.flights.length === 3, `state ${st.slug} has 3 guided flights`);
+    assert.ok(Array.isArray(st.flights) && st.flights.length === 4, `state ${st.slug} has 4 guided flights`);
+    assert.ok(st.flights.some(f => f.href.startsWith('volume.html')), `state ${st.slug} links to volume.html`);
     assert.equal(getState(st.slug).code, st.code);
   }
+});
+
+test('No holes in the middle of Amazonas or coastal municipalities (Novo Airão, Presidente Figueiredo, Rio de Janeiro)', () => {
+  const amGeo = JSON.parse(fs.readFileSync('data/am/municipios.json', 'utf8'));
+  const amShapes = JSON.parse(fs.readFileSync('data/am/precinct-shapes.json', 'utf8'));
+
+  for (const name of ['NOVO AIRÃO', 'PRESIDENTE FIGUEIREDO', 'MANAUS']) {
+    const feat = amGeo.features.find(f => (f.properties.name || f.properties.NAME || '').toUpperCase() === name);
+    assert.ok(feat, `${name} exists in Amazonas GeoJSON`);
+    const firstRing = feat.geometry.type === 'Polygon'
+      ? feat.geometry.coordinates[0]
+      : feat.geometry.coordinates[0][0];
+    assert.ok(firstRing.length >= 15, `${name} primary outer ring has full mainland boundary (${firstRing.length} pts)`);
+    assert.ok(Array.isArray(amShapes[name]) && amShapes[name].length > 0, `${name} has precinct shapes`);
+  }
+});
+
+test('computeInteriorPoint places pin inside concave L-shaped polygon and computeCalloutPlacements prevents overlap', () => {
+  const lRing = [
+    { x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 2 },
+    { x: 2, y: 2 }, { x: 2, y: 10 }, { x: 0, y: 10 }, { x: 0, y: 0 }
+  ];
+  const { cx, cy } = computeInteriorPoint(lRing);
+  assert.ok(cx >= 0 && cx <= 10 && cy >= 0 && cy <= 10, 'interior point within bounds');
+  assert.ok(cx < 2.5 || cy < 2.5, `interior point (${cx.toFixed(2)}, ${cy.toFixed(2)}) is inside the L-shape, not in the empty cutout`);
+
+  const placed = computeCalloutPlacements([
+    { name: 'a', sx: 400, sy: 300, w: 160, h: 48 },
+    { name: 'b', sx: 405, sy: 305, w: 160, h: 48 },
+  ], 800, 600);
+  assert.equal(placed.length, 2);
+  assert.notEqual(placed[0].place, placed[1].place, 'Close callouts separate into above and below');
 });
 
 test('Official IBGE GeoJSON mesh and 2026 + 2018-2022 election data exist for all 27 UFs', () => {
@@ -75,4 +110,5 @@ test('Official IBGE GeoJSON mesh and 2026 + 2018-2022 election data exist for al
   assert.equal(ubaCity.pop, 337836);
   assert.equal(udiCity.pop, 713224);
 });
+
 

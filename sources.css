@@ -1,3 +1,4 @@
+html, body { height: auto; }
 .src-page {
   max-width: 820px;
   margin: 0 auto;

@@ -4,12 +4,12 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Como o Brasil Vota</title>
-<script>if (/[?&](race|voters)=/.test(location.search) && !/[?&]uf=/.test(location.search)) location.replace('estado.html?uf=sp&' + location.search.slice(1));</script>
-<meta name="description" content="Resultados eleitorais mapeados município por município e eleitor por eleitor, um estado por vez." />
+<script>if (/[?&](race|voters)=/.test(location.search) && !/[?&]uf=/.test(location.search)) location.replace('estado.html?uf=br&' + location.search.slice(1));</script>
+<meta name="description" content="Resultados eleitorais mapeados no Brasil inteiro, estado por estado, município por município e eleitor por eleitor em 3D." />
 <meta property="og:type" content="website" />
 <meta property="og:site_name" content="Como o Brasil Vota" />
 <meta property="og:title" content="Como o Brasil Vota" />
-<meta property="og:description" content="Resultados eleitorais mapeados município por município e eleitor por eleitor, um estado por vez." />
+<meta property="og:description" content="Resultados eleitorais mapeados no Brasil inteiro, estado por estado, município por município e eleitor por eleitor em 3D." />
 <meta name="twitter:card" content="summary" />
 <link rel="stylesheet" href="style.css" />
 <link rel="stylesheet" href="home.css" />
@@ -23,23 +23,73 @@
 <body>
 <div class="home">
   <header>
+    <div class="home-badge"><span class="home-badge-diamond"></span>Atlas Eleitoral 3D · TSE &amp; IBGE · 5.570 Municípios</div>
     <h1>Como o Brasil Vota</h1>
-    <p>Resultados eleitorais mapeados município por município e eleitor por eleitor, um estado por vez.</p>
-    <p class="why-link"><a href="why.html">Por que mapear votos assim? A mesma eleição em três mapas →</a></p>
+    <p>Resultados eleitorais oficiais do TSE (2026, 2022 e 2018) e Censo IBGE 2022 mapeados no Brasil inteiro — cidade por cidade nas 5.570 sedes municipais e estado por estado nas 27 UFs.</p>
+    <p class="why-link">
+      <a href="estado.html?uf=br&unit=precinct"><b>Novo: Todas as 5.570 Cidades do Brasil em 3D →</b></a>
+      &nbsp;·&nbsp;
+      <a href="why.html">Por que mapear votos assim? →</a>
+      &nbsp;·&nbsp;
+      <a href="volume.html?uf=br&step=fill">Votos como Volume e Jarros 3D →</a>
+      &nbsp;·&nbsp;
+      <a href="compare.html?uf=br">Comparar dois mapas lado a lado ⇆</a>
+    </p>
   </header>
-  <div class="layout">
-    <div>
+
+  <div class="nat-bar" id="natBar">
+    <div class="nat-score" id="natScore"></div>
+    <div class="nat-3d-cta">
+      <span class="nat-lbl">Brasil Inteiro em 3D</span>
+      <div class="nat-3d-links">
+        <a class="nat-btn primary" href="estado.html?uf=br&unit=precinct">Brasil: 5.570 Cidades em 3D →</a>
+        <a class="nat-btn" href="estado.html?uf=br&unit=county">Brasil: 27 Estados em 3D</a>
+        <a class="nat-btn" href="voters.html?uf=br">Pontos de Eleitores (Brasil)</a>
+        <a class="nat-btn" href="story.html?uf=br">Tour Guiado 60s (Brasil)</a>
+        <a class="nat-btn" href="volume.html?uf=br&step=fill">Jarros 3D (Brasil)</a>
+        <a class="nat-btn" href="compare.html?uf=br">Comparar Brasil ⇆</a>
+      </div>
+    </div>
+    <div class="nat-controls">
+      <div class="nat-group">
+        <span class="nat-lbl">Colorir mapa</span>
+        <div class="seg" id="mapColorSwitch" role="group" aria-label="Colorir mapa nacional">
+          <button type="button" data-mode="margin" class="active">Vencedor 2026</button>
+          <button type="button" data-mode="lead">Saldo de votos</button>
+          <button type="button" data-mode="shift">Giro 22→26</button>
+          <button type="button" data-mode="gold">Clássico</button>
+        </div>
+      </div>
+      <div class="nat-group">
+        <span class="nat-lbl">Região</span>
+        <div class="seg" id="regionSwitch" role="group" aria-label="Filtrar por região">
+          <button type="button" data-reg="all" class="active">Brasil (27)</button>
+          <button type="button" data-reg="Sudeste">Sudeste</button>
+          <button type="button" data-reg="Nordeste">Nordeste</button>
+          <button type="button" data-reg="Sul">Sul</button>
+          <button type="button" data-reg="Norte">Norte</button>
+          <button type="button" data-reg="Centro-Oeste">C.-Oeste</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="home-layout">
+    <div class="map-col">
       <div id="map"></div>
+      <div class="map-legend" id="mapLegend"></div>
       <p id="status" aria-live="polite"></p>
     </div>
     <div id="ready"></div>
   </div>
+
   <section class="all">
-    <h2>Todos os 27 estados e o Distrito Federal</h2>
+    <h2 id="allTitle">Brasil Inteiro + todos os 27 estados e o Distrito Federal</h2>
     <ul id="list"></ul>
   </section>
+
   <footer>
-    <p>Os resultados das Eleições Gerais de 2026 (1º e 2º turnos para Presidente, Governador, Senado, Câmara e Assembleias) e do histórico 2018–2022 cobrem todas as 27 Unidades da Federação (5.570 municípios). Onde pontos representam eleitores, as posições e cores são estimadas dentro das respectivas zonas eleitorais ponderadas pelo Censo IBGE 2022.</p>
+    <p>Os resultados das Eleições Gerais de 2026 (1º e 2º turnos para Presidente, Governador, Senado, Câmara e Assembleias) e do histórico 2018–2022 cobrem o mapa nacional consolidado e todas as 27 Unidades da Federação (5.570 municípios) com dados oficiais do TSE. Onde pontos representam eleitores, as posições e cores seguem as zonas eleitorais do TSE ponderadas pelo Censo Demográfico IBGE 2022.</p>
     <p>Malhas estaduais e municipais oficiais: <a href="https://www.ibge.gov.br/geociencias/organizacao-do-territorio/malhas-territoriais.html" target="_blank" rel="noopener">IBGE (Instituto Brasileiro de Geografia e Estatística)</a>. Dados eleitorais: <a href="https://dadosabertos.tse.jus.br/" target="_blank" rel="noopener">Tribunal Superior Eleitoral (TSE)</a>.</p>
     <p><a href="sources.html">Fontes e créditos de todos os estados →</a></p>
   </footer>

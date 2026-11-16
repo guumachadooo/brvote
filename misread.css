@@ -12,7 +12,7 @@
 html, body {
   margin: 0; padding: 0;
   background: var(--bg); color: var(--ink);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   line-height: 1.5;
 }
 
@@ -20,13 +20,12 @@ html, body {
   display: grid;
   grid-template-rows: auto 1fr;
   height: 100vh;
-}
-@media (max-width: 960px) {
-  .page { height: auto; }
+  height: 100svh;
 }
 
 .topbar {
   display: flex; align-items: center; justify-content: space-between;
+  flex-wrap: wrap; gap: 8px;
   padding: 12px 22px;
   background: var(--panel);
   border-bottom: 1px solid var(--line);
@@ -34,7 +33,7 @@ html, body {
 }
 .topbar .brand { color: var(--muted); font-weight: 600; }
 .topbar .brand b { color: var(--ink); }
-.topbar .links { display: flex; gap: 16px; }
+.topbar .links { display: flex; gap: 16px; flex-wrap: wrap; }
 .topbar a { color: var(--accent); text-decoration: none; font-weight: 600; font-size: 12.5px; }
 .topbar a:hover { text-decoration: underline; }
 
@@ -42,9 +41,6 @@ html, body {
   display: grid;
   grid-template-columns: 440px 1fr;
   min-height: 0;
-}
-@media (max-width: 960px) {
-  .body { grid-template-columns: 1fr; }
 }
 
 .rail {
@@ -129,7 +125,7 @@ a.cta:hover { color: #141414; filter: brightness(1.06); }
   display: flex; flex-direction: column;
 }
 #stage { flex: 1; position: relative; overflow: hidden; }
-#stage canvas { display: block; width: 100%; height: 100%; }
+#stage canvas { display: block; width: 100%; height: 100%; touch-action: none; }
 
 .caption-bar {
   position: absolute; top: 14px; left: 14px; right: 14px; z-index: 10;
@@ -144,15 +140,67 @@ a.cta:hover { color: #141414; filter: brightness(1.06); }
 }
 .caption-bar b { color: var(--accent); }
 
-#callouts { position: absolute; inset: 0; pointer-events: none; z-index: 9; }
+#callouts { position: absolute; inset: 0; pointer-events: none; z-index: 9; overflow: hidden; }
 .callout {
-  position: absolute; transform: translate(-50%, -100%);
-  padding-bottom: 12px; text-align: center;
+  position: absolute;
+  width: 0; height: 0;
+  text-align: center;
+}
+.callout .leader {
+  position: absolute;
+  left: -200px; top: -150px;
+  width: 400px; height: 300px;
+  pointer-events: none;
+  overflow: visible;
+}
+.callout .leader line {
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-linecap: round;
 }
 .callout .box {
+  position: absolute;
+  left: 0; top: 0;
   background: rgba(13, 17, 26, 0.95);
   border: 1px solid var(--accent);
   border-radius: 7px; padding: 5px 9px;
   font-size: 11.5px; white-space: nowrap;
+  box-shadow: 0 8px 20px rgba(0,0,0,0.55);
 }
+.callout .box b { color: var(--accent); }
 .callout .box .sub { color: var(--muted); font-size: 10.5px; display: block; }
+.callout .dot-pin {
+  position: absolute;
+  left: -3.5px; top: -3.5px;
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px rgba(11, 14, 20, 0.85);
+}
+
+/* Em smartphones: o mapa fica NO TOPO (sticky) e as etapas rolam por baixo dele, igual ao usavote original */
+@media (max-width: 960px) {
+  .page { height: auto; }
+  .topbar { padding: 10px 14px; font-size: 12px; }
+  .body { grid-template-columns: 1fr; }
+  .stage-wrap {
+    order: -1;
+    position: sticky;
+    top: 0;
+    height: 48vh;
+    height: 48svh;
+    min-height: 280px;
+    z-index: 20;
+    background: var(--bg);
+    border-bottom: 1px solid var(--line);
+  }
+  .rail {
+    border-right: 0;
+    padding: 18px 15px 36px;
+    overflow-y: visible;
+  }
+  .caption-bar {
+    top: 8px; left: 8px; right: 8px;
+    padding: 7px 10px; font-size: 11.5px;
+  }
+  .intro h1 { font-size: 20px; }
+}
